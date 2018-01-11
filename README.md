@@ -26,10 +26,8 @@ Score: 10/100
 Message Details
 Observables
 URLs
-•  hXXp[:]//www[.]arifleet[.]com/publications/pool_vehicles/
 •  hXXps[:]//hatimedia[.]com/wp-content/plugins/wp[.]admin/secure[.]outloo[.]jdjksajkfdkfjdnffkjdsafkjAKKFDKFJDKFJKDF/ac90c11a260d0bbcf2c15b3e64198dd9/
 Domains
-•  www[.]arifleet[.]com
 •  hatimedia[.]com
 Hashes
 •  42883ED4AFA0FA0BE84A3214E271F8D3
