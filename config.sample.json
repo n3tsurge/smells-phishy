@@ -1,0 +1,46 @@
+{
+    "VirusTotal": {
+        "Enabled": true,
+        "PositiveThreshold": 3,
+        "APIKey": ""
+    },
+    "URLScan": {
+        "Enabled": true,
+        "ScanWait": 30,
+        "APIKey": "",
+        "MaliciousThreshold": 5
+    },
+    "WhoisReport": {
+        "Enabled": true,
+        "NewlyRegisteredDays": 30,
+        "RecentUpdateDays": 30
+    },
+    "SendThankYou": false,
+    "ExchangeWebServiceURL": "https://exchange.mydomain.com/EWS/Exchange.asmx",
+    "PhishingMailboxUsername": "DOMARI\\mymailbox",
+    "PhishingMailboxPassword": "mypassword",
+    "ExchangeWebServicesDLL": "C:/Program Files/Microsoft/Exchange/Web Services/2.2/Microsoft.Exchange.WebServices.dll",
+    "Proxy": "http://myproxy",
+    "ProxyUseDefaultCredentials": true,
+    "DomainWhitelist": [
+        "schemas.microsoft.com",
+        "www.w3.org",
+        "ns.adobe.com",
+        "radpdf.com",
+        "dynaforms.com",
+        "purl.org",
+        "neevia.com",
+        "twitter.com"
+    ],
+    "Scoring": {
+        "pattern_weight": 5,
+        "subject_weight": 5,
+        "phrase_weight": 5,
+        "url_weight": 25,
+        "hash_weight": 25
+    },
+    "Report": {
+        "Recipient": "reports@mydomain.com",
+        "SendReport": true
+    }
+}
