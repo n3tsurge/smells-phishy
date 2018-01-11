@@ -1,6 +1,13 @@
 # Smells Phishy
 A Powershell tool for assessing phishing emails
 
+## Process
+
+1. Smells phishy logs into your phishing reporting mailbox
+2. It thanks the user for their submission (configurable in config.json)
+3. The script extracts all the observables, IPs, Emails, URLs, Domains, Attachments and runs them against reputation based tools
+4. The script gives the email a score out of 100 and sends a report to the designated security analyst.
+
 ## Installation
 
 1. Create a phishing mailbox for users to send mail to
