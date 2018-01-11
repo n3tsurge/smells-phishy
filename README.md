@@ -1,6 +1,9 @@
 # Smells Phishy
 A Powershell tool for assessing phishing emails
 
+## WORK IN PROGRESS
+I am not responsible if you wedge your system using this.
+
 ## Process
 
 1. Smells phishy logs into your phishing reporting mailbox
