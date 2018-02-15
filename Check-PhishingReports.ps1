@@ -1,4 +1,4 @@
-﻿$scriptPath = Split-Path -parent $PSCommandPath
+$scriptPath = Split-Path -parent $PSCommandPath
 
 $config = Get-Content .\config.json -Raw | ConvertFrom-JSON
 
@@ -128,7 +128,7 @@ $suspicious_subjects = @(
     "(has\ been\ limited)",
     "(We\ have\ locked)",
     "(has\ been\ suspended)",
-    "(unusual\ activity)",
+    "(unusual\ activit[^*\s]+)",
     "(notifications\ pending)",
     "(your\ (customer\ )?account\ has)",
     "(your\ (customer\ )?account\ was)",
@@ -154,17 +154,15 @@ function Get-NewMessages {
     )
     
     begin {
-        Import-Module $config.ExchangeWebServicesDLL
+        Import-Module $config.Exchange.WebServiceDLL
     }
     
     process {
-
-        Write-Log -Message "---"
         
         # Build a connection the Exchange Server
         $ExchangeService = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService([Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2010_SP1)
-        $ExchangeService.Credentials = New-Object System.Net.NetworkCredential($config.PhishingMailboxUsername, $config.PhishingMailboxPassword)
-        $ExchangeService.Url = $config.ExchangeWebServiceURL
+        $ExchangeService.Credentials = New-Object System.Net.NetworkCredential($config.SourceMailbox.username, $config.SourceMailbox.password)
+        $ExchangeService.Url = $config.Exchange.WebServiceURL
 
         # Find the Inbox for the Phishing Mailbox
         $folderid = new-object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox,$Mailbox)     
@@ -180,12 +178,14 @@ function Get-NewMessages {
 
         if($itemCount -eq 0) {
             Write-Log -Message "No emails found. Exiting..."
-            exit
+            return
         } else {
             Write-Log -Message "Found $itemCount Emails. Processing..."
         }
 
         $Items | % { 
+
+            $scanDate = Get-Date
 
             $_.Load()
 
@@ -203,6 +203,8 @@ function Get-NewMessages {
                 New-Item $workPath"/Attachments" -Type Directory | Out-Null
                 New-Item $workPath"/Screenshots" -Type Directory | Out-Null
 
+                $indicators = @();
+
                 $observables = @{
                     'ips' = @();
                     'hashes' = @();
@@ -213,10 +215,12 @@ function Get-NewMessages {
                     'pattern_matches' = @();
                     'phrase_matches' = @();
                     'subject_matches' = @();
+                    'shorteners' = $false;
+                    'rewrapped' = $false;
                 }
 
                 # Thank the user for their submission
-                if($config.SendThankYou) { Send-ThankYou -MailTo $_.Sender.Address -Service $ExchangeService }
+                if($config.SourceMailbox.send_thank_you) { Send-ThankYou -MailTo $_.Sender.Address -Service $ExchangeService }
 
                 # Load all the attachemnts
                 $_.Attachments.Load()
@@ -245,21 +249,122 @@ function Get-NewMessages {
                     $threatScore += $config.Scoring.subject_weight*$observables.subject_matches.Count
                 }
 
+                # Tally if a Gmail defang tag was observed
+                if($observables.gmail_defang.Count -gt 0) {
+                    $message = "A Gmail URL rewrap was observed"
+                    $indicators += $message
+                    $threatScore += 10
+                }
+
+                # Score Email Addresses
+                if($observables.addresses.Count -gt 0) {
+                    ForEach($address in $observables.addresses) {
+                        if($config.HaveIBeenPwned.Enabled) {
+                            Write-Log -Message "Checking $address against HaveIBeenPwned"
+                            $result = Get-HIBPStatus -EmailAddress $address
+                            if($result) {
+                                $message = "Email Address $address has been listed on HaveIBeenPwned"
+                                Write-Log -Message $message -ForeGroundColor Yellow
+                                $indicators += $message
+                                $threatScore += ($result | measure).Count * $config.Scoring.email_address_weight
+                            }
+                        }
+                    }
+                }
+
+                # Score Domains
+                if($observables.domains.Count -gt 0) {
+                    ForEach($domain in $observables.domains) {
+                        if($config.Sucuri.Enabled) {
+                            Write-Log -Message "Checking $domain against Sucuri Sitecheck"
+                            $result = Get-SucuriScanReport -URL $domain
+                            if($result.blacklisted -eq $true) {
+                                $message = "The URL $domain is blacklisted on Sucuri Sitecheck" 
+                                Write-Log -Message $message -ForeGroundColor Red 
+                                $indicators += $message
+                                $threatScore += $config.Scoring.url_weight
+                            }
+                            if($result.infected -eq $true) {
+                                $message = "The URL $domain is infected on Sucuri Sitecheck"
+                                Write-Log -Message $message -ForeGroundColor Red
+                                $indicators += $message
+                                $threatScore += $config.Scoring.url_weight
+                            }
+                        }
+                        if($config.JSONWhois.Enabled) {
+                            Write-Log -Message "Performing a WHOIS check for $domain"
+                            $result = Invoke-AnalyzeWhois -Domain $domain
+                            if($result.new_registration) {
+                                $message = "$domain was registered in the last $($config.JSONWhois.NewlyRegisteredDays) days"
+                                Write-Log -Message $message -ForeGroundColor Yellow
+                                $indicators += $message
+                                $threatScore += $config.Scoring.whois_weight
+                            }
+                            if($result.recent_update) {
+                                $message = "$domain was updated in the last $($config.JSONWhois.RecentUpdateDays) days"
+                                Write-Log -Message $message -ForeGroundColor Yellow
+                                $indicators += $message
+                                $threatScore += $config.Scoring.whois_weight
+                            }
+                        }
+                    }
+                }
+
+                # Score IPs
+                if($observables.ips.Count -gt 0) {
+                    ForEach($ip in $observables.ips) {
+                        if($config.VirusTotal.Enabled) {
+                            $result = Get-VTIPReport -IpAddress $ip
+                            if($result.positives -ge $config.VirusTotal.PositiveThreshold) {
+                                $message = "IP Address $ip has positive findings within the VirusTotal Positive Threshold ($($config.VirusTotal.PositiveThreshold))"
+                                Write-Log -Message $message -ForeGroundColor Red
+                                $indicators += $message
+                                $threatScore += $config.Scoring.ip_weight
+                            }
+                        }
+                    }
+                }
+
                 # Score URLs
                 if($observables.urls.Count -gt 0) {
                     ForEach($url in $observables.urls) {
                         if($config.VirusTotal.Enabled) {
                             $result = Get-VTURLReport -URL $url
                             if($result.positives -ge $config.VirusTotal.PositiveThreshold) {
+                                $message = "The URL $url has positive findings within the VirusTotal Positive Threshold ($($config.VirusTotal.PositiveThreshold))" 
+                                Write-Log -Message $message -ForeGroundColor Red
+                                $indicators += $message
                                 $threatScore += $config.Scoring.url_weight
                             }
                         }
                         if($config.URLScan.Enabled) {
                             $result = Get-URLScanReport -URL $url
                             if($result.stats.malicious -gt $config.URLScan.MaliciousThreshold) {
+                                $message = "The URL $url has a malicious indicators within the URLScan Malicious Threshold  ($($config.URLScan.MaliciousThreshold))"
+                                Write-Log -Message $message -ForeGroundColor Red
+                                $indicators += $message
                                 $threatScore += $config.Scoring.url_weight
                             }
                             Get-URLScanScreenshot -URL $result.task.screenshotURL -OutPath $workPath"/Screenshots/"
+                        }
+                        if($config.PhishTank.Enabled) {
+                            Write-Log -Message "Checking $url against the PhishTank database"
+                            $result = Get-PhishTankStatus -URL $url
+                            if($result) {
+                                $message = "The URL $url was found in the PhishTank database"
+                                Write-Log -Message $message -ForeGroundColor Red
+                                $indicators += $message
+                                $threatScore += $config.Scoring.url_weight
+                            }
+                        }
+                        if($config.Certly.Enabled) {
+                            Write-Log -Message "Checking $url against the Certly database."
+                            if(Get-CertlyStatus -URL $url) {
+                                $message = "The URL $url was found as not clean by Certly"
+                                Write-Log -Message $message -ForeGroundColor Red
+                                $indicators += $message
+                                $threatScore += $config.Scoring.url_weight
+                            }
                         }
                     }
                 }
@@ -270,10 +375,24 @@ function Get-NewMessages {
                         if($config.VirusTotal.Enabled) {
                             $result = Get-VTHashReport -Hash $hash
                             if($result.positives -ge $config.VirusTotal.PositiveThreshold) {
+                                $message ="The hash $hash has positive findings within the VirusTotal Positive Threshold ($($config.VirusTotal.PositiveThreshold))"
+                                Write-Log -Message $message -ForeGroundColor Red
+                                $indicators += $message
                                 $threatScore += $config.Scoring.hash_weight
                             }
                         }
                     }
+                }
+
+                # Score if any of the URLs were rewrapped or shortened
+                if($observables.shortened) {
+                    $indicators += "Shortend URLS were detected."
+                    $threatScore += 5
+                }
+
+                if($observables.rewrapped) {
+                    $indicators += "Websense wrapped URLs were detected indicating suspicious destinations."
+                    $threatScore += 10
                 }
 
                 # threatScore can't be greater than 100
@@ -287,7 +406,27 @@ function Get-NewMessages {
 
                     $report += "<h2>Score: $threatScore/100</h2>"
                     $report += "<h2>Message Details</h2>"
+                    $report += "<b>Reported By:</b> $($_.Sender.Address)<br>"
+                    $report += "<b>Subject:</b> $($_.Subject)<br>"
+                    $report += "<b>Scan Start:</b> $scanDate<br>"
+                    $report += "<b>Scan Finish:</b> $(Get-Date)<br>"
+
+                    $report += "<h2>Scoring Indicators</h2>"
+                    ForEach($indicator in $indicators) {
+                        $report += "<li>$(Defang $indicator)</li>"
+                    }
+
                     $report += "<h2>Observables</h2>"
+                    $report += "<h3>IP Addresses</h3>"
+                    ForEach($ip in ($observables.ips | Select -Uniq)) {
+                        $ip = Defang $ip
+                        $report += "<li>$ip</li>"
+                    }
+
+                    $report += "<h3>Subjects</h3>"
+                    ForEach($subject in ($observables.subjects | Select -Uniq)) {
+                        $report += "<li>$subject</li>"
+                    }
 
                     $report += "<h3>URLs</h3>"
                     ForEach($url in ($observables.urls | Select -Uniq)) {
@@ -299,6 +438,12 @@ function Get-NewMessages {
                     ForEach($domain in ($observables.domains | Select -Uniq)) {
                         $domain = Defang $domain
                         $report += "<li>$domain</li>"
+                    }
+
+                    $report += "<h3>Email Addresses</h3>"
+                    ForEach($address in ($observables.addresses | Select -Uniq)) {
+                        $address = Defang $address
+                        $report += "<li>$address</li>"
                     }
 
                     $report += "<h3>Hashes</h3>"
@@ -326,9 +471,9 @@ function Get-NewMessages {
                     Send-Report -MailTo $config.Report.Recipient -Report $report -EmailSubject $_.Subject -Service $ExchangeService -ScreenshotsPath $workPath"/Screenshots/"
                 }
 
-                $observables
-
-                $_.IsRead = $true
+                if($config.SourceMailbox.mark_as_read) {
+                    $_.IsRead = $true
+                }
                 $_.Update(1)
 
             } else {
@@ -363,13 +508,63 @@ function Invoke-ExtractObservables {
         $observables.ips += Invoke-ExtractIPs -Data $Message.InternetMessageHeaders
 
         # Extract URLs from the Message Body
-        $observables.urls += Invoke-ExtractURLs -Data $Message.Body
+        # Decode HTML encoded strings
+        Add-Type -AssemblyName System.Web
+        $BodyData = [System.Web.HttpUtility]::HtmlDecode($Message.Body)
+        $observables.urls += Invoke-ExtractURLs -Data $BodyData
+
+        # Check if any of the URLS were defanged by Gmail
+        if($BodyData -match 'defang_data-saferedirecturl') {
+            $observables.gmail_defang = $Matches.Count
+            Write-Host "Extracting google defanged URL"
+            ForEach($url in $observables.urls) {
+                if($url -match "^.*url\?hl\=\w+\&q=(.*)\&source") {
+                    $observables.urls += $Matches[1]
+                    $observables.urls = $observables.urls -ne $url
+                }
+            }
+        }
+
+        # Check if any of the URLs are Websense Rewrapped URLs
+        # if they are find the URL that was rewrapped
+        # Note: Only works with Websense
+        Write-Host "Checking for Websense wrapped URLs"
+        ForEach($url in $observables.urls) {
+            if($url -like "*webdefence.global.blackspider.com/urlwrap*") {
+
+                # Extract the real URL from the page
+                $observables.urls += Invoke-ExtractWrappedURL -WebsenseURL $url
+
+                # Remove the Wrapper URL
+                $observables.urls = $observables.urls -ne $url
+
+                $observables.rewrapped = $true
+            }
+        }
+
+        Write-Host "Checking for shortened URLs"
+        # Checck if any of the URLs are shortened
+        ForEach($url in $observables.urls) {
+            $data = Unshorten-URL $url
+            if($data -ne $url) {
+
+                # Add the real URL
+                $observables.urls += $data
+
+                # Remove the shortener
+                $observables.urls = $observables.urls -ne $url
+
+                $observables.shorteners = $true
+            }
+        }
 
         # Extract the email subject
         $observables.subjects += $Message.Subject
 
-        # Extract the message sender
+        # Extract all emails
         $observables.addresses += $Message.Sender.Address
+        $observables.addresses += Invoke-ExtractEmailAddresses -Data $BodyData
+        $observables.addresses += Invoke-ExtractEmailAddresses -Data $Message.InternetMessageHeaders
 
         # Check to see if any patterns are matched in the Message Body
         ForEach($pattern in $suspicious_patterns) {
@@ -420,7 +615,7 @@ function Invoke-ExtractObservables {
         $found = $false
         ForEach($domain in $DomainWhitelist) {
             $filter = "*"+$domain+"*"
-            if($url -like $filter) {
+            if($([System.URI]$url).Authority -like $filter) {
                 $found = $true
             }
         }
@@ -428,6 +623,24 @@ function Invoke-ExtractObservables {
             $filtered_urls += ($url)
         }
     }
+
+    # Remove any whitelisted domains from the addresses list
+    $filtered_emails = @()
+    ForEach($address in $observables.addresses) {
+        $found = $false
+        ForEach($domain in $DomainWhitelist) {
+            $filter = "*"+$domain+"*"
+            if($address -like $filter) {
+                $found = $true
+            }
+        }
+        if(!$found) {
+            $filtered_emails += ($address)
+        }
+    }
+
+    $observables.addresses = $filtered_emails | Select -Uniq
+
     #Write-Host $filtered_urls.Count
     $observables.urls = $filtered_urls | Select -Uniq
 
@@ -439,7 +652,18 @@ function Invoke-ExtractObservables {
         # Add the domain if it isn't already in the list
         if($_ -like "*http*") {
             $observables.domains += (([System.URI]$_).Authority)
+        } else {
+
+            # Some URLs don't have a protocol in the URI
+            # add one so System.URI can do its job
+            $url = "http://"+$_
+            $observables.domains += (([System.URI]$_).Authority)
         }
+    }
+
+    # Resolve all the domains to their IP address
+    FoReach($domain in $observables.domains) {
+        $observables.ips += (Resolve-DnsName $domain).IP4Address
     }
 
     return $observables
@@ -535,20 +759,53 @@ function Invoke-ExtractURLs {
         [Parameter(Mandatory=$true)][string]$Data
     )
 
-    # Unescape HTML
-    $Data = [System.Web.HttpUtility]::HtmlDecode($Data)
-
-    $urls = ((Select-String '\b(?:(?:https?|ftp|file)://|www\.|ftp\.)(?:\([-A-Z0-9+&@#/%=~_|$?!:,.]*\)|[-A-Z0-9+&@#/%=~_|$?!:,.])*(?:\([-A-Z0-9+&@#/%=~_|$?!:,.]*\)|[A-Z0-9+&@#/%=~_|$])' -AllMatches -Input $Data).Matches.Value)
+    $urls = ((Select-String '\b(?:(?:https?|ftp|file)://|www\.|ftp\.)(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[-A-Z0-9+&@#\*/%=~_|$?!:,.])*(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[A-Z0-9+&@#\*/%=~_|$])' -AllMatches -Input $Data).Matches.Value)
     $urls = $urls | Select -Uniq
     return $urls
 }
 
-function Invoke-AnalyzeWhois {
+function Invoke-ExtractEmailAddresses {
     Param(
-        [Parameter(Mandatory=$true)]$WhoisReport
+        [Parameter(Mandatory=$true)][string]$Data
+    )
+
+    $emails = ((Select-String '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b'-AllMatches -Input $Data).Matches.Value)
+    $emails = $emails | Select -Uniq
+    return $emails
+}
+
+function Invoke-ExtractWrappedURL {
+    Param(
+        [Parameter(Mandatory=$true)][string]$WebsenseURL
     )
 
     process {
+        $RequestParams = $DefaultRequestParams.Clone()
+        $RequestParams.Add('Uri', $WebsenseURL)
+        $Data = Invoke-WebRequest @RequestParams
+
+        $Data = [System.Web.HttpUtility]::HtmlDecode($Data)
+
+        $url = ((Select-String 'URL:.*(\b(?:(?:https?|ftp|file)://|www\.|ftp\.)(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[-A-Z0-9+&@#\*/%=~_|$?!:,.])*(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[A-Z0-9+&@#\*/%=~_|$]))' -AllMatches -Input $data).Matches.Groups[1].Value)
+        return $url
+    }
+}
+
+function Invoke-AnalyzeWhois {
+    Param(
+        [Parameter(Mandatory=$true)]$Domain
+    )
+
+    process {
+
+        $RequestParams = $DefaultRequestParams.Clone()
+        $url = "https://api.jsonwhois.io/whois/domain?key=$($config.JSONWhois.token)&domain=$($Domain)"
+        $RequestParams.Add('Uri', $url)
+        $RequestParams.Add('Method', 'GET')
+
+        $data = Invoke-RestMethod @RequestParams
+
+        $WhoisReport = $data.result
 
         $report = @{
             "new_registration" = $false;
@@ -558,19 +815,11 @@ function Invoke-AnalyzeWhois {
         # Get todays date so we can calculate if activity on the domain is recent
         $today = (Get-Date)
 
-        # Extract the creation date for the domain
-        $WhoisReport -match "Creation Date: ([.*\S]+Z)" | Out-Null
-        if($matches) { $creationDate = $matches[1] }
-
-        if((New-TimeSpan -Start ([datetime]$creationDate) -End $today).TotalDays -le $config.WhoisReport.NewlyRegisteredDays) {
+        if((New-TimeSpan -Start ([datetime]$WhoisReport.created) -End $today).TotalDays -le $config.JSONWhois.NewlyRegisteredDays) {
             $report.new_registration = $true
         }
 
-        # Extract the update date for the domain
-        $WhoisReport -match "Updated Date: ([.*\S]+Z)" | Out-Null
-        if($matches) { $updatedDate = $matches[1] }
-
-        if((New-TimeSpan -Start ([datetime]$updatedDate) -End $today).TotalDays -le $config.WhoisReport.RecentUpdateDays) {
+        if((New-TimeSpan -Start ([datetime]$WhoisReport.changed) -End $today).TotalDays -le $config.JSONWhois.RecentUpdateDays) {
             $report.recent_update = $true
         }
 
@@ -600,6 +849,7 @@ function Get-VTIPReport {
     )
 
     process {
+        Write-Log -Message "Running Virus Total IP Report for $IpAddress"
         $RequestParams = $DefaultRequestParams.Clone()
         $url = "https://www.virustotal.com/vtapi/v2/ip-address/report?apikey=$VTApiKey&resource=$IpAddress"
         $RequestParams.Add('Uri', $url)
@@ -672,6 +922,28 @@ function Get-URLScanScreenshot {
     }
 }
 
+function Get-CertlyStatus {
+    Param (
+        [Parameter(Mandatory=$true)][string]$URL
+    )
+
+    process {
+
+        $RequestParams = $DefaultRequestParams.Clone()
+        $RequestParams.Add('Uri', "https://api.certly.io/v1/lookup?url=$URL&token=$($config.Certly.APIKey)")
+        $RequestParams.Add('Method', 'Get')
+        $RequestParams.Add('ErrorVariable', $RequestError)
+
+        $result = try { $result = (Invoke-RestMethod @RequestParams).data } catch { $null }
+
+        if(!$result) {
+            return $false
+        }
+
+        return $result.status -ne "clean"
+    }
+}
+
 function Get-URLScanReport {
     Param (
         [Parameter(Mandatory=$true)][string]$URL
@@ -706,15 +978,147 @@ function Get-URLScanReport {
     }
 }
 
+function Get-PhishTankStatus {
+    [CmdletBinding()]
+
+    Param(
+        [Parameter(Mandatory=$true)][string]$URL
+    )
+
+    process {
+        $RequestParams = $DefaultRequestParams.Clone()
+        $RequestParams.Add('Method', 'Post')
+        $RequestParams.Add('Uri', "http://checkurl.phishtank.com/checkurl/")
+        $RequestParams.Add('Body', @{
+                url=$URL;
+                format="json";
+                app_key=$config.PhishTank.APIKey
+            })
+
+        $result = Invoke-WebRequest @RequestParams
+        return $result.results.in_database
+    }
+}
+
+function Unshorten-URL {
+    [CmdletBinding()]
+
+    Param(
+        [Parameter(Mandatory=$true)][string]$URL
+    )
+
+    process {
+
+        $shorteners = @(
+            "bit.do",
+            "t.co",
+            "lnkd.in",
+            "db.tt",
+            "qr.ae",
+            "adf.ly",
+            "goo.gl",
+            "bitly.com",
+            "bit.ly",
+            "cur.lv",
+            "tinyurl.com",
+            "ow.ly",
+            "ity.im",
+            "q.gs",
+            "is.gd",
+            "po.st",
+            "bc.vc",
+            "twitthis.com",
+            "u.to",
+            "j.mp",
+            "buzurl.com",
+            "cutt.us",
+            "u.bb",
+            "yourls.org",
+            "x.co",
+            "vzturl.com",
+            "v.gd",
+            "tr.im"
+        )
+
+        if($null -ne ($shorteners | ? { ([System.URI]$URI).Authority -match $_ }))
+        {
+            $uri = "https://unshorten.me/s/$URL"
+            $RequestParams = $DefaultRequestParams.Clone()
+            $RequestParams.Add('Method', 'Get')
+            $RequestParams.Add('Uri', $uri)
+
+            $data = Invoke-RestMethod @RequestParams
+            if($data -like "*Unknown Error*") {
+                return $URL
+            } else {
+                return $data    
+            }
+        } else {
+            return $URL
+        }
+        
+    }
+}
+
+function Get-SucuriScanReport {
+    [CmdletBinding()]
+
+    Param(
+        [Parameter(Mandatory=$true)][string]$URL
+    )
+
+    process {
+        $RequestParams = $DefaultRequestParams.Clone()
+        $RequestParams.Add('Method', 'Get')
+        $RequestParams.Add('Uri', "https://sitecheck.sucuri.net/results/$URL")
+        $data = Invoke-WebRequest @RequestParams
+
+        $siteInfected = $data.Content -notlike "*No Malware Detected*"
+        $siteBlacklisted = $data.Content -notlike "*Not Currently Blacklisted*"
+
+        return @{"Infected"=$siteInfected;"Blacklisted"=$siteBlacklisted}
+    }
+}
+
+<# 
+Checks the HaveIBeenPwned API to see if an email address has been
+pwned at some point
+#>
+function Get-HIBPStatus {
+    [CmdletBinding()]
+
+    Param(
+        [Parameter(Mandatory=$true)][string]$emailAddress
+    )
+
+    Begin {
+        $RequestParams = @{}
+
+        $RequestParams.Add('Proxy', 'http://192.168.150.148:8080')
+        $RequestParams.Add('ProxyUseDefaultCredentials', $true)
+    }
+
+    Process {
+        $url = "https://haveibeenpwned.com/api/v2/breachedaccount/{0}" -f $emailAddress
+        $RequestParams.Add('Method', 'Get')
+        $RequestParams.Add('Uri', $url)
+        $RequestParams.Add('ErrorVariable', 'RESTError')
+
+        $result = try { Invoke-RestMethod @RequestParams } catch { $null }
+        return $result
+    }
+}
+
 function Write-Log {
     Param(
         [string]$Message,
+        [string]$ForeGroundColor="White",
         [switch]$Verbose
     )
 
     process {
         $date = '{0:yyyy-MM-dd hh:mm:ss}' -f (Get-Date)
-        Write-Host "[$date] $Message"
+        Write-Host "[$date] $Message" -ForeGroundColor $ForeGroundColor
     }
     
 }
@@ -732,4 +1136,8 @@ function Write-ReportLog {
     #exit
 }
 
-Get-NewMessages -Mailbox phishing@arifleet.com 
+While (1) {
+    Write-Log -Message "Polling target mailbox"
+    Get-NewMessages -Mailbox $config.SourceMailbox.address
+    Start-Sleep $config.SourceMailbox.polling_interval
+}
