@@ -10,37 +10,53 @@
         "APIKey": "",
         "MaliciousThreshold": 5
     },
-    "WhoisReport": {
+    "JSONWhois": {
         "Enabled": true,
+        "token": "",
         "NewlyRegisteredDays": 30,
         "RecentUpdateDays": 30
     },
-    "SendThankYou": false,
-    "ExchangeWebServiceURL": "https://exchange.mydomain.com/EWS/Exchange.asmx",
-    "PhishingMailboxUsername": "DOMARI\\mymailbox",
-    "PhishingMailboxPassword": "mypassword",
-    "ExchangeWebServicesDLL": "C:/Program Files/Microsoft/Exchange/Web Services/2.2/Microsoft.Exchange.WebServices.dll",
-    "Proxy": "http://myproxy",
+    "HaveIBeenPwned": {
+        "Enabled": true
+    },
+    "Sucuri": {
+        "Enabled": true
+    },
+    "PhishTank": {
+        "Enabled": true,
+        "APIKey": ""
+    },
+    "Certly": {
+        "Enabled": true,
+        "APIKey": ""
+    },
+    "Proxy": "",
     "ProxyUseDefaultCredentials": true,
-    "DomainWhitelist": [
-        "schemas.microsoft.com",
-        "www.w3.org",
-        "ns.adobe.com",
-        "radpdf.com",
-        "dynaforms.com",
-        "purl.org",
-        "neevia.com",
-        "twitter.com"
-    ],
+    "DomainWhitelist": [],
     "Scoring": {
         "pattern_weight": 5,
         "subject_weight": 5,
         "phrase_weight": 5,
         "url_weight": 25,
-        "hash_weight": 25
+        "hash_weight": 25,
+        "ip_weight": 25,
+        "email_address_weight": 5,
+        "whois_weight": 10
     },
     "Report": {
-        "Recipient": "reports@mydomain.com",
+        "Recipient": "",
         "SendReport": true
+    },
+    "SourceMailbox": {
+        "username": "",
+        "password": "",
+        "address": "",
+        "mark_as_read": true,
+        "send_thank_you": true,
+        "polling_interval": 15
+    },
+    "Exchange": {
+        "WebServiceURL": "",
+        "WebServiceDLL": ""
     }
 }
