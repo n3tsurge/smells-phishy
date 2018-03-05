@@ -484,8 +484,6 @@ function Get-NewMessages {
                     Send-Report -MailTo $config.Report.Recipient -Report $report -EmailSubject $_.Subject -Service $ExchangeService -ScreenshotsPath $workPath"/Screenshots/"
                 }
 
-                $observables
-
                 if($config.SourceMailbox.mark_as_read) {
                     $_.IsRead = $true
                 }
