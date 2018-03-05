@@ -217,6 +217,8 @@ function Get-NewMessages {
                     'subject_matches' = @();
                     'shorteners' = $false;
                     'rewrapped' = $false;
+                    'reply_to_mismatch' = $false;
+                    'tracking_pixel' = $false;
                 }
 
                 # Thank the user for their submission
@@ -252,6 +254,13 @@ function Get-NewMessages {
                 # Tally if a Gmail defang tag was observed
                 if($observables.gmail_defang.Count -gt 0) {
                     $message = "A Gmail URL rewrap was observed"
+                    $indicators += $message
+                    $threatScore += 10
+                }
+
+                # Tally if the reply-to address does not match the original sender
+                if($observables.reply_to_mismatch) {
+                    $message = "The reply-to address does not match the original sender"
                     $indicators += $message
                     $threatScore += 10
                 }
@@ -395,11 +404,15 @@ function Get-NewMessages {
                     $threatScore += 10
                 }
 
+                if($observables.tracking_pixel) {
+                    $indicators += "A tracking pixel was detected"
+                    $threatScore += 5
+                }
+
                 # threatScore can't be greater than 100
                 if($threatScore -gt 100) {
                     $threatScore = 100
                 }
-
 
                 if($config.Report.SendReport) {
                     $report = "<h1>Smells Phishy Email Report</h1>"
@@ -471,6 +484,8 @@ function Get-NewMessages {
                     Send-Report -MailTo $config.Report.Recipient -Report $report -EmailSubject $_.Subject -Service $ExchangeService -ScreenshotsPath $workPath"/Screenshots/"
                 }
 
+                $observables
+
                 if($config.SourceMailbox.mark_as_read) {
                     $_.IsRead = $true
                 }
@@ -516,7 +531,7 @@ function Invoke-ExtractObservables {
         # Check if any of the URLS were defanged by Gmail
         if($BodyData -match 'defang_data-saferedirecturl') {
             $observables.gmail_defang = $Matches.Count
-            Write-Host "Extracting google defanged URL"
+            Write-Log -Message "Extracting google defanged URL"
             ForEach($url in $observables.urls) {
                 if($url -match "^.*url\?hl\=\w+\&q=(.*)\&source") {
                     $observables.urls += $Matches[1]
@@ -528,7 +543,7 @@ function Invoke-ExtractObservables {
         # Check if any of the URLs are Websense Rewrapped URLs
         # if they are find the URL that was rewrapped
         # Note: Only works with Websense
-        Write-Host "Checking for Websense wrapped URLs"
+        Write-Log -Message "Checking for Websense wrapped URLs"
         ForEach($url in $observables.urls) {
             if($url -like "*webdefence.global.blackspider.com/urlwrap*") {
 
@@ -542,7 +557,7 @@ function Invoke-ExtractObservables {
             }
         }
 
-        Write-Host "Checking for shortened URLs"
+        Write-Log -Message "Checking for shortened URLs"
         # Checck if any of the URLs are shortened
         ForEach($url in $observables.urls) {
             $data = Unshorten-URL $url
@@ -563,8 +578,18 @@ function Invoke-ExtractObservables {
 
         # Extract all emails
         $observables.addresses += $Message.Sender.Address
+        if($Message.ReplyTo.Count -gt 0) {
+            $observables.addresses += $Message.ReplyTo.Address
+        }
         $observables.addresses += Invoke-ExtractEmailAddresses -Data $BodyData
         $observables.addresses += Invoke-ExtractEmailAddresses -Data $Message.InternetMessageHeaders
+
+        # Check the body for the existence of any tracking pixels
+        $matches = (Select-String '(<img.*(?=.*?src="(.*?)")(?=.*?(width\=\"1\"))(?=.*?(height\=\"1\")))' -AllMatches -Input $message.Body.Text).Matches
+        $matches.Groups
+        if($matches.Groups.Count -ge 4) {
+            $observables.tracking_pixel = $true
+        }
 
         # Check to see if any patterns are matched in the Message Body
         ForEach($pattern in $suspicious_patterns) {
@@ -597,6 +622,11 @@ function Invoke-ExtractObservables {
             ForEach($attach in $Attachments) {
                 $observables = Invoke-ExtractObservables -Attachment $attach -Observables $observables -Guid $guid
             }
+        }
+
+        # Check if the reply-to matches the original sender
+        if($Message.From.Addess -ne $Message.ReplyTo.Address) {
+            $observables.reply_to_mismatch = $true
         }
 
     } else {
@@ -661,11 +691,25 @@ function Invoke-ExtractObservables {
         }
     }
 
-    # Resolve all the domains to their IP address
-    FoReach($domain in $observables.domains) {
-        $observables.ips += (Resolve-DnsName $domain).IP4Address
+    # Get domains from email addresses
+    if($observables.addresses) {
+        ForEach($address in $observables.addresses) {
+            $observables.domains += ($address -Split "@")[1]
+        }
     }
 
+    # Resolve all the domains to their IP address
+    if($observables.domains) {
+        ForEach($domain in $observables.domains) {
+            if($domain) {
+                $observables.ips += (Resolve-DnsName $domain).IP4Address
+            }
+        }
+    }
+
+    # Dedupe IP addresses
+    $observables.ips = $observables.ips | Select -Uniq
+    
     return $observables
 }
 
