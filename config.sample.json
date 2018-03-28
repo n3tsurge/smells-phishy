@@ -31,8 +31,24 @@
         "APIKey": ""
     },
     "Proxy": "",
-    "ProxyUseDefaultCredentials": true,
-    "DomainWhitelist": [],
+    "ProxyUseDefaultCredentials": false,
+    "DomainWhitelist": [
+        "schemas.microsoft.com",
+        "www.w3.org",
+        "ns.adobe.com",
+        "radpdf.com",
+        "dynaforms.com",
+        "purl.org",
+        "neevia.com",
+        "twitter.com"
+    ],
+    "ADDomains": [
+        "mydomain.com"
+    ],
+    "ExecutiveCheck": true,
+    "Executives": [
+        "mtest"
+    ],
     "Scoring": {
         "pattern_weight": 5,
         "subject_weight": 5,
@@ -44,19 +60,19 @@
         "whois_weight": 10
     },
     "Report": {
-        "Recipient": "",
+        "Recipient": "me@mydomain.com",
         "SendReport": true
     },
     "SourceMailbox": {
-        "username": "",
-        "password": "",
-        "address": "",
+        "username": "DOMAIN\\phishing",
+        "password": "MYAMAZINGLYSTRONGPASSWORDISSOSTRONG",
+        "address": "phishing@mydomain.com",
         "mark_as_read": true,
         "send_thank_you": true,
         "polling_interval": 15
     },
     "Exchange": {
-        "WebServiceURL": "",
-        "WebServiceDLL": ""
+        "WebServiceURL": "https://exchange.mydomain.com/EWS/Exchange.asmx",
+        "WebServiceDLL": "C:/Program Files/Microsoft/Exchange/Web Services/2.2/Microsoft.Exchange.WebServices.dll"
     }
 }

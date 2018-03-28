@@ -1,4 +1,4 @@
-$scriptPath = Split-Path -parent $PSCommandPath
+﻿$scriptPath = Split-Path -parent $PSCommandPath
 
 $config = Get-Content .\config.json -Raw | ConvertFrom-JSON
 
@@ -16,6 +16,11 @@ if($config.Proxy) {
     $DefaultRequestParams.Add('Proxy', $config.Proxy)
 }
 
+if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
+    Write-Host "[!] Active Directory Powershell Module not available, skipping Executive Fraud checks."
+    $config.ExecutiveCheck = $false
+}
+
 $suspicious_patterns = @(
     '(blocked\ your?\ online)',
     '(suspicious\ activit)',
@@ -27,41 +32,41 @@ $suspicious_patterns = @(
     '(Verify\ your\ ID\s)',
     '(dear\ \w{3,8}(\ banking)?\ user)',
     '(chase\S{0,10}\.html")',
-    '(\b(?<=https?://)(www\.)?icloud(?!\.com))',
+    '(\b(?<=https?:\/\/)(www\.)?icloud(?!\.com))',
     '((?<![\x00\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4A\x4B\x4C\x4D\x4E\x4F\x50\x51\x52\x53\x54\x55\x56\x57\x58\x59\x5A])appie\W)',
-    '(/GoogleDrive/)',
-    '(/googledocs?/)',
-    '(/Dropfile/)',
+    '(\/GoogleDrive\/)',
+    '(\/googledocs?\/)',
+    '(\/Dropfile\/)',
     '(limit\ (and\ suspend\ )?your\ account)',
-    '(\b(?<=https?://)(?!www\.paypal\.com/)\S{0,40}pa?y\S{0,2}al(?!\S*\.com/))',
+    '(\b(?<=https?:\/\/)(?!www\.paypal\.com\/)\S{0,40}pa?y\S{0,2}al(?!\S*\.com\/))',
     '(sitey\.me)',
     '(myfreesites\.net)',
-    '(/uploadfile/)',
-    '(/\S{0,3}outloo\S{0,2}k\S{1,3}\W)',
-    '(\b(?<=https?://webmail\.)\S{0,40}webmail\w{0,3}(?!/[0-9])(?!\S{0,40}\.com/))',
+    '(\/uploadfile\/)',
+    '(\/\S{0,3}outloo\S{0,2}k\S{1,3}\W)',
+    '(\b(?<=https?:\/\/webmail\.)\S{0,40}webmail\w{0,3}(?!\/[0-9])(?!\S{0,40}\.com\/))',
     '(owaportal)',
     '(outlook\W365)',
-    '(/office\S{0,3}365/)',
+    '(\/office\S{0,3}365\/)',
     '(-icloud\Wcom)',
     '(pyapal)',
-    '(/docu\S{0,3}sign\S{1,4}/)',
-    '(/helpdesk/)',
+    '(\/docu\S{0,3}sign\S{1,4}\/)',
+    '(\/helpdesk\/)',
     '(pay\Sa\S{0,2}login)',
-    '(/natwest/)',
-    '(/dro?pbo?x/)',
+    '(\/natwest\/)',
+    '(\/dro?pbo?x\/)',
     '(%20paypal)',
     '(\.invoice\.php)',
     '(security-?err)',
-    '(/newdropbox/)',
-    '(/www/amazon)',
+    '(\/newdropbox\/)',
+    '(\/www\/amazon)',
     '(simplefileupload)',
     '(security-?warning)',
     '(-(un)?b?locked)',
-    '(//helpdesk(?!\.))',
+    '(\/\/helpdesk(?!\.))',
     '(\.my-free\.website)',
     '(mail-?update)',
     '(\.yolasite\.com)',
-    '(//webmail(?!\.))',
+    '(\/\/webmail(?!\.))',
     '(\.freetemplate\.site)',
     '(\.sitey\.me)',
     '(\.ezweb123\.com)',
@@ -75,15 +80,17 @@ $suspicious_patterns = @(
     '(ownership\ validation\ (has\ )?expired)',
     '(icloudcom)',
     '(\w\.jar(?=\b))',
-    '(/https?/www/)',
+    '(\/https?\/www\/)',
     '(\.000webhost(app)?\.com)',
-    '(is\.gd/)',
+    '(is\.gd\/)',
     '(\.weebly\.com)',
     '(\.wix\.com)',
     '(tiny\.cc)',
     '(\.joburg)',
     '(\.top)',
-    '(\/wp-admin\/)'
+    '(\/wp-admin\/)',
+    '(OWA\/index.php)',
+    '(Outlook(\ Web)?\ Access)'
 )
 
 $suspicious_phrases = @(
@@ -121,7 +128,8 @@ $suspicious_phrases = @(
     "(please click here)",
     "(your statement is attached)",
     "(remit payment)",
-    "(Dear Colleague)"
+    "(Dear Colleague)",
+    '(Outlook(\ Web)?\ Access)'
 )
 
 $suspicious_subjects = @(
@@ -142,9 +150,10 @@ $suspicious_subjects = @(
     "(verification\ required)",
     "(microsoft\ outlook)",
     "(account\ deactivation)",
-    "(Incident\s\#\d+)"
+    "(Incident\s\#\d+)",
+    "(https?\:\/\/)",
+    '(Outlook(\ Web)?\ Access)'
 )
-
 
 function Get-NewMessages {
     param
@@ -231,9 +240,6 @@ function Get-NewMessages {
                 ForEach ($attachment in $_.Attachments) {
                     $observables = Invoke-ExtractObservables -Attachment $attachment -Observables $observables -Guid $guid
                 }
-
-                # Deduplicate domains
-                $observables.domains = $observables.domains | Select -Uniq
 
                 # Start scoring the email
                 # Tally if there were any phrases matched
@@ -407,6 +413,11 @@ function Get-NewMessages {
                 if($observables.tracking_pixel) {
                     $indicators += "A tracking pixel was detected"
                     $threatScore += 5
+                }
+
+                if($observables.executive_fraud) {
+                    $indicators += "Potential Executive Fraud - Email uses Executive's name but different email"
+                    $threatScore += 10
                 }
 
                 # threatScore can't be greater than 100
@@ -627,6 +638,10 @@ function Invoke-ExtractObservables {
             $observables.reply_to_mismatch = $true
         }
 
+        if($config.ExecutiveCheck) {
+            $observables.executive_fraud = Check-ExecutiveFraud -Email $Message.From
+        }
+
     } else {
 
         $filePath = $scriptPath+"\Analysis\"+$guid+"\Attachments\"+$Attachment.Name
@@ -705,8 +720,9 @@ function Invoke-ExtractObservables {
         }
     }
 
-    # Dedupe IP addresses
+    # Dedupe IPs and Domains again
     $observables.ips = $observables.ips | Select -Uniq
+    $observables.domains = $observables.domains | Select -Uniq
     
     return $observables
 }
@@ -868,6 +884,132 @@ function Invoke-AnalyzeWhois {
         return $report
     }
 }
+
+function Check-SiteCertificate{
+    [CmdletBinding()]
+
+    Param(
+        [Parameter(Mandatory=$true)][string]$IP,
+        [Parameter(Mandatory=$false)][string]$Port=443,
+        [Parameter(Mandatory=$false)][switch]$Validate=$true
+    )
+
+    Begin {
+    }
+
+    Process {
+
+        # Skip sites that don't have the destination port open
+        if(!(Test-NetConnection -ComputerName $IP -Port $tcp)) {
+            return $null
+        }
+        
+        try {
+            $TcpClient = New-Object -TypeName System.Net.Sockets.TcpClient
+            $tcpSocket = New-Object System.Net.Sockets.TcpClient($IP, $Port)
+            $tcpStream = $tcpSocket.GetStream()
+            $callback = { param($sender, $cert, $chain, $errors) return $true }
+            $sslStream = New-Object -TypeName System.Net.Security.SslStream -ArgumentList @($tcpStream, $true, $callback)
+            $sslStream.AuthenticateAsClient($IP)
+            $certInfo = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($sslStream.RemoteCertificate)
+        } finally {
+            $sslStream.Dispose()
+            $tcpClient.Dispose()
+        }
+
+        $report = @{
+            recently_generated=$false;
+            lets_encrypt=$false;
+            verified=$false;
+        }
+
+        # If the cert was issued recently it may be a new site
+        if((New-TimeSpan -Start ([datetime]$certInfo.NotBefore) -End $today).TotalDays -le 90) {
+            $report.recently_generated = $true
+        }
+
+        # We sort of trust Let's Encrypt
+        if($certInfo.Issuer -eq "CN=Let's Encrypt Authority X3, O=Let's Encrypt, C=US") {
+            $report.lets_encrypt = $true
+        }
+
+        # Valid cert?
+        if($certInfo.Verify()) {
+            $report.verified = $true
+        }
+
+        return $report
+
+    }
+
+    End {
+    }
+}
+
+<# 
+# For Futute consideration to check DNS records for
+# the sending mail server
+Function Validate-DNSRecords {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory=$true)][string]$domain
+    )
+
+    Begin {
+    }
+
+    Process {
+
+        $report = @{
+            spfRecord = $false;
+            spfIndicators = @{
+                softFail = $false;
+                allowAll = $false;
+                broadRange = $false;
+                neutral = $false
+            };
+            dmarcRecord = $false;
+            dkimRecord = $false;
+        }
+
+        $records = Resolve-DnsName $domain -Type TXT -Server 8.8.8.8
+        ForEach($record in $records) {
+            if($record.Strings -like "v=spf*") {
+                $report.spfRecord = $true
+                if($record.Strings -like "*+all") {
+                    $report.spfIndicators.allowAll = $true
+                }
+
+                if($record.Strings -like "*\?all") {
+                    $report.spfIndicators.neutral = $true
+                }
+
+                if($record.Strings -like "*~all") {
+                    $report.spfIndicators.softFail = $true
+                }
+
+                if($record.Strings -like "*ip4*") {
+                    $ipCount = 0
+                    $matches = (Select-String 'ip4:([^*\s]+)' -Input $record.Strings -AllMatches).Matches
+                    ForEach($match in $matches) {
+                        $match.Groups[1].Value
+                    }
+                }
+
+            }
+
+            if($record.Strings -like "v=DMARC1*") {
+                $report.dmarcRecord = $true
+            }
+        }
+
+        $report = New-Object -Type PSObject -Property $report
+        return $report
+    }
+
+    End {
+    }
+} #>
 
 function Get-VTDomainReport {
     Param(
@@ -1151,6 +1293,55 @@ function Get-HIBPStatus {
     }
 }
 
+<#
+Checks if the e-mail is masquerading as a company executive
+Executives are defined in the configuration file with their First, Last and Valid Email
+Requires the Microsoft Active Directory Module
+#>
+function Check-ExecutiveFraud {
+    [CmdletBinding()]
+
+    Param(
+        [Parameter(Mandatory=$true)][string]$Email
+    )
+
+    Begin {
+
+        $domains = @()
+        ForEach($forest in $config.ADDomains) {
+            $domains += (Get-ADForest $forest).domains
+        }
+    }
+
+    Process {
+        ForEach($exec in $config.Executives) {
+            
+            ForEach($domain in $domains) {
+                $adUser = try { Get-ADUser -Filter { sAMAccountName -eq $exec } -Properties proxyAddresses -Server $domain } catch { $null }
+                if($adUser) {
+                    break;
+                }
+            }
+            
+            # If we found the user pull all their mail addresses else return False
+            if($adUser) {
+                $mailAddresses = $adUser.proxyAddresses | ? { $_ -match 'smtp' } | % { ($_ -split ":")[1] }
+            } else {
+                return $false
+            }            
+
+            # If the email is using the executives first name and last name but the email isn't theirs return True
+            if(($Email -match $adUser.givenName) -and ($Email -match $adUser.surname) -and ($Email -notmatch ($mailAddresses -join "|"))) {
+                return $true
+            }
+        }
+        return $false
+    }
+
+    End {
+    }
+}
+
 function Write-Log {
     Param(
         [string]$Message,
@@ -1177,6 +1368,7 @@ function Write-ReportLog {
     #Get-Content $logPath
     #exit
 }
+
 
 While (1) {
     Write-Log -Message "Polling target mailbox"
