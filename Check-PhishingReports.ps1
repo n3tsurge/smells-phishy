@@ -1,4 +1,4 @@
-﻿$scriptPath = Split-Path -parent $PSCommandPath
+$scriptPath = Split-Path -parent $PSCommandPath
 
 $config = Get-Content .\config.json -Raw | ConvertFrom-JSON
 
@@ -228,6 +228,7 @@ function Get-NewMessages {
                     'rewrapped' = $false;
                     'reply_to_mismatch' = $false;
                     'tracking_pixel' = $false;
+                    'base_striker' = $false;
                 }
 
                 # Thank the user for their submission
@@ -420,9 +421,19 @@ function Get-NewMessages {
                     $threatScore += 10
                 }
 
+                if($observables.base_striker) {
+                    $indicators += "Potential Base Striker attack - HTML base tag detected"
+                    $threatScore += 10
+                }
+
                 # threatScore can't be greater than 100
                 if($threatScore -gt 100) {
                     $threatScore = 100
+                }
+
+                if($observables.encoded_subject) {
+                    $indicators += "Subject is encoded which can be used to evade detections"
+                    $threatScore += 5
                 }
 
                 if($config.Report.SendReport) {
@@ -593,6 +604,12 @@ function Invoke-ExtractObservables {
         $observables.addresses += Invoke-ExtractEmailAddresses -Data $BodyData
         $observables.addresses += Invoke-ExtractEmailAddresses -Data $Message.InternetMessageHeaders
 
+        # Check the body for base-striker 
+        $matches = (Select-String '(<base href.*)' -AllMatches -Input $message.Body.Text).Matches.Value
+        if($matches.count -gt 0) {
+            $observables.base_striker = $true
+        }
+
         # Check the body for the existence of any tracking pixels
         $matches = (Select-String '(<img.*(?=.*?src="(.*?)")(?=.*?(width\=\"1\"))(?=.*?(height\=\"1\")))' -AllMatches -Input $message.Body.Text).Matches
         $matches.Groups
@@ -617,11 +634,23 @@ function Invoke-ExtractObservables {
         }
 
         # Check the subject against well know subjects
+        # Check if the subject is encoded
         ForEach($subject in $suspicious_subjects) {
             $matches = ((Select-String $subject -AllMatches -Input $message.Subject).Matches.Value)
             if($matches.count -gt 0) {
                 $observables.subject_matches += $matches
             }
+
+            $matches2 = ((Select-String "\=\?" -AllMatches -Input $message.Subject))
+            if($matches2.count -gt 0) {
+                $observables.encoded_subject = $true
+            }
+
+            $matches3 = ((Select-String "utf-8" -AllMatches -Input $message.Subject))
+            if($matches3.count -gt 0) {
+                $observables.encoded_subject = $true
+            }
+
         }
 
         # If the Message has any attachments, inspect those as well
