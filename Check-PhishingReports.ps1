@@ -217,6 +217,7 @@ function Get-NewMessages {
                 $observables = @{
                     'ips' = @();
                     'hashes' = @();
+                    'attachments' = @();
                     'urls' = @();
                     'domains' = @();
                     'subjects'= @();
@@ -279,7 +280,7 @@ function Get-NewMessages {
                             Write-Log -Message "Checking $address against HaveIBeenPwned"
                             $result = Get-HIBPStatus -EmailAddress $address
                             if($result) {
-                                $message = "Email Address $address has been listed on HaveIBeenPwned"
+                                $message = "Email Address $(Defang $address) has been listed on HaveIBeenPwned"
                                 Write-Log -Message $message -ForeGroundColor Yellow
                                 $indicators += $message
                                 $threatScore += ($result | measure).Count * $config.Scoring.email_address_weight
@@ -295,13 +296,13 @@ function Get-NewMessages {
                             Write-Log -Message "Checking $domain against Sucuri Sitecheck"
                             $result = Get-SucuriScanReport -URL $domain
                             if($result.blacklisted -eq $true) {
-                                $message = "The URL $domain is blacklisted on Sucuri Sitecheck" 
+                                $message = "The URL $(Defang $domain) is blacklisted on Sucuri Sitecheck" 
                                 Write-Log -Message $message -ForeGroundColor Red 
                                 $indicators += $message
                                 $threatScore += $config.Scoring.url_weight
                             }
                             if($result.infected -eq $true) {
-                                $message = "The URL $domain is infected on Sucuri Sitecheck"
+                                $message = "The URL $(Defang $domain) is infected on Sucuri Sitecheck"
                                 Write-Log -Message $message -ForeGroundColor Red
                                 $indicators += $message
                                 $threatScore += $config.Scoring.url_weight
@@ -311,13 +312,13 @@ function Get-NewMessages {
                             Write-Log -Message "Performing a WHOIS check for $domain"
                             $result = Invoke-AnalyzeWhois -Domain $domain
                             if($result.new_registration) {
-                                $message = "$domain was registered in the last $($config.JSONWhois.NewlyRegisteredDays) days"
+                                $message = "$(Defang $domain) was registered in the last $($config.JSONWhois.NewlyRegisteredDays) days"
                                 Write-Log -Message $message -ForeGroundColor Yellow
                                 $indicators += $message
                                 $threatScore += $config.Scoring.whois_weight
                             }
                             if($result.recent_update) {
-                                $message = "$domain was updated in the last $($config.JSONWhois.RecentUpdateDays) days"
+                                $message = "$(Defang $domain) was updated in the last $($config.JSONWhois.RecentUpdateDays) days"
                                 Write-Log -Message $message -ForeGroundColor Yellow
                                 $indicators += $message
                                 $threatScore += $config.Scoring.whois_weight
@@ -332,7 +333,7 @@ function Get-NewMessages {
                         if($config.VirusTotal.Enabled) {
                             $result = Get-VTIPReport -IpAddress $ip
                             if($result.positives -ge $config.VirusTotal.PositiveThreshold) {
-                                $message = "IP Address $ip has positive findings within the VirusTotal Positive Threshold ($($config.VirusTotal.PositiveThreshold))"
+                                $message = "IP Address $(Defang $ip) has positive findings within the VirusTotal Positive Threshold ($($config.VirusTotal.PositiveThreshold))"
                                 Write-Log -Message $message -ForeGroundColor Red
                                 $indicators += $message
                                 $threatScore += $config.Scoring.ip_weight
@@ -347,7 +348,7 @@ function Get-NewMessages {
                         if($config.VirusTotal.Enabled) {
                             $result = Get-VTURLReport -URL $url
                             if($result.positives -ge $config.VirusTotal.PositiveThreshold) {
-                                $message = "The URL $url has positive findings within the VirusTotal Positive Threshold ($($config.VirusTotal.PositiveThreshold))" 
+                                $message = "The URL $(Defang $url) has positive findings within the VirusTotal Positive Threshold ($($config.VirusTotal.PositiveThreshold))" 
                                 Write-Log -Message $message -ForeGroundColor Red
                                 $indicators += $message
                                 $threatScore += $config.Scoring.url_weight
@@ -356,7 +357,7 @@ function Get-NewMessages {
                         if($config.URLScan.Enabled) {
                             $result = Get-URLScanReport -URL $url
                             if($result.stats.malicious -gt $config.URLScan.MaliciousThreshold) {
-                                $message = "The URL $url has a malicious indicators within the URLScan Malicious Threshold  ($($config.URLScan.MaliciousThreshold))"
+                                $message = "The URL $(Defang $url) has a malicious indicators within the URLScan Malicious Threshold  ($($config.URLScan.MaliciousThreshold))"
                                 Write-Log -Message $message -ForeGroundColor Red
                                 $indicators += $message
                                 $threatScore += $config.Scoring.url_weight
@@ -367,7 +368,7 @@ function Get-NewMessages {
                             Write-Log -Message "Checking $url against the PhishTank database"
                             $result = Get-PhishTankStatus -URL $url
                             if($result) {
-                                $message = "The URL $url was found in the PhishTank database"
+                                $message = "The URL $(Defang $url) was found in the PhishTank database"
                                 Write-Log -Message $message -ForeGroundColor Red
                                 $indicators += $message
                                 $threatScore += $config.Scoring.url_weight
@@ -376,7 +377,7 @@ function Get-NewMessages {
                         if($config.Certly.Enabled) {
                             Write-Log -Message "Checking $url against the Certly database."
                             if(Get-CertlyStatus -URL $url) {
-                                $message = "The URL $url was found as not clean by Certly"
+                                $message = "The URL $(Defang $url) was found as not clean by Certly"
                                 Write-Log -Message $message -ForeGroundColor Red
                                 $indicators += $message
                                 $threatScore += $config.Scoring.url_weight
@@ -388,7 +389,8 @@ function Get-NewMessages {
                 # Score Hashes
                 if($observables.hashes.Count -gt 0) {
                     ForEach($hash in $observables.hashes) {
-                        if($config.VirusTotal.Enabled) {
+                        # Only submit SHA256 hashes to VT
+                        if($config.VirusTotal.Enabled -and $hash.Length -eq 64) {
                             $result = Get-VTHashReport -Hash $hash
                             if($result.positives -ge $config.VirusTotal.PositiveThreshold) {
                                 $message ="The hash $hash has positive findings within the VirusTotal Positive Threshold ($($config.VirusTotal.PositiveThreshold))"
@@ -436,6 +438,17 @@ function Get-NewMessages {
                     $threatScore += 5
                 }
 
+                foreach($address in $observables.addresses) {
+                    $username = Get-ADUsernameByEmail -Email $address
+                    if($username) {
+                        $missingAV = (Get-S1HostByUsername -Username $username).data -eq $null
+                        if ($missingAV) {
+                            $indicators += "User <b>$username</b> appears to be missing Anti-Virus"
+                        }
+                    }
+                    #$hasAV = if(Get-S1HostByUsername -Username (Get-ADUsernameByEmail))
+                }
+
                 if($config.Report.SendReport) {
                     $report = "<h1>Smells Phishy Email Report</h1>"
 
@@ -448,7 +461,7 @@ function Get-NewMessages {
 
                     $report += "<h2>Scoring Indicators</h2>"
                     ForEach($indicator in $indicators) {
-                        $report += "<li>$(Defang $indicator)</li>"
+                        $report += "<li>$indicator</li>"
                     }
 
                     $report += "<h2>Observables</h2>"
@@ -539,6 +552,9 @@ function Invoke-ExtractObservables {
     $Attachment.Load()
     if($Attachment.Item) {
         $Message = $Attachment.Item
+
+        $Message
+
         # Extract IP Addresses from the Message Header
         $observables.ips += Invoke-ExtractIPs -Data $Message.InternetMessageHeaders
 
@@ -640,17 +656,6 @@ function Invoke-ExtractObservables {
             if($matches.count -gt 0) {
                 $observables.subject_matches += $matches
             }
-
-            $matches2 = ((Select-String "\=\?" -AllMatches -Input $message.Subject))
-            if($matches2.count -gt 0) {
-                $observables.encoded_subject = $true
-            }
-
-            $matches3 = ((Select-String "utf-8" -AllMatches -Input $message.Subject))
-            if($matches3.count -gt 0) {
-                $observables.encoded_subject = $true
-            }
-
         }
 
         # If the Message has any attachments, inspect those as well
@@ -667,16 +672,31 @@ function Invoke-ExtractObservables {
             $observables.reply_to_mismatch = $true
         }
 
-        if($config.ExecutiveCheck) {
+        # Check if the message headers have an encoded subject
+        if($config.Checks.EncodedSubject) {
+            
+            $matches = ((Select-String "ubject\:\s\=\?" -AllMatches -Input $Message.InternetMessageHeaders).Matches.Value)
+            $matches
+            if($matches.count -gt 0) {
+                $observables.encoded_subject = $true
+            }
+        }
+
+        if($config.Checks.Executives) {
             $observables.executive_fraud = Check-ExecutiveFraud -Email $Message.From
         }
 
     } else {
 
         $filePath = $scriptPath+"\Analysis\"+$guid+"\Attachments\"+$Attachment.Name
+        $observables.attachements += $Attachment.Name
         $Attachment.Load($filePath)
-        $hash = (Get-FileHash $filePath -Algorithm MD5).hash
-        $observables.hashes += $hash
+        $hashMD5 = (Get-FileHash $filePath -Algorithm MD5).hash
+        $hashSHA1 = (Get-FileHash $filePath -Algorithm SHA1).hash
+        $hashSHA256 = (Get-FileHash $filePath -Algorithm SHA256).hash
+        $observables.hashes += $hashMD5
+        $observables.hashes += $hashSHA1
+        $observables.hashes += $hashSHA256
         $observables.urls += Invoke-ExtractURLs -Data (Get-Content $filePath -Raw)
 
     }
@@ -744,7 +764,9 @@ function Invoke-ExtractObservables {
     if($observables.domains) {
         ForEach($domain in $observables.domains) {
             if($domain) {
-                $observables.ips += (Resolve-DnsName $domain).IP4Address
+                if($config.ResolveDomainsFromIP) {
+                    $observables.ips += (Resolve-DnsName $domain).IP4Address
+                }
             }
         }
     }
@@ -902,12 +924,16 @@ function Invoke-AnalyzeWhois {
         # Get todays date so we can calculate if activity on the domain is recent
         $today = (Get-Date)
 
-        if((New-TimeSpan -Start ([datetime]$WhoisReport.created) -End $today).TotalDays -le $config.JSONWhois.NewlyRegisteredDays) {
-            $report.new_registration = $true
+        if($WhoisReport.created) {
+            if((New-TimeSpan -Start ([datetime]$WhoisReport.created) -End $today).TotalDays -le $config.JSONWhois.NewlyRegisteredDays) {
+                $report.new_registration = $true
+            }   
         }
 
-        if((New-TimeSpan -Start ([datetime]$WhoisReport.changed) -End $today).TotalDays -le $config.JSONWhois.RecentUpdateDays) {
-            $report.recent_update = $true
+        if($WhoisReport.changed) {
+            if((New-TimeSpan -Start ([datetime]$WhoisReport.changed) -End $today).TotalDays -le $config.JSONWhois.RecentUpdateDays) {
+                $report.recent_update = $True
+            }
         }
 
         return $report
@@ -1287,7 +1313,7 @@ function Get-SucuriScanReport {
         $data = Invoke-WebRequest @RequestParams
 
         $siteInfected = $data.Content -notlike "*No Malware Detected*"
-        $siteBlacklisted = $data.Content -notlike "*Not Currently Blacklisted*"
+        $siteBlacklisted = $data.Content -notlike "*Site is not Blacklisted*"
 
         return @{"Infected"=$siteInfected;"Blacklisted"=$siteBlacklisted}
     }
@@ -1319,6 +1345,87 @@ function Get-HIBPStatus {
 
         $result = try { Invoke-RestMethod @RequestParams } catch { $null }
         return $result
+    }
+}
+
+<# Grabs the last machine a user was logged into in
+SentinelOne.  If no machine is found, a note is added in the analysis report
+indicating as such.  If a machine is found a Deep visibility search is performed
+to see if any users have clicked on any indicators
+#>
+function Get-S1HostByUsername {
+    [CmdletBinding()]
+
+    Param(
+        [Parameter(Mandatory=$true)][string]$username
+    )
+
+    Begin {
+
+        $url = "$($config.SentinelOne.TenantUrl)/web/api/v2.0/agents?lastLoggedInUserName__contains=$username&apitoken=$($config.SentinelOne.ApiKey)"
+        $url
+        $RequestParams = $DefaultRequestParams.Clone()
+        $RequestParams.Add('Uri', $url)
+        $RequestParams.Add('Method', 'GET')
+        
+
+    }
+
+    Process {
+        $result = Invoke-RestMethod @RequestParams
+        $result
+    }
+
+    End {
+
+    }
+}
+
+<# Grabs a users active directory username by looking for their e-mail
+address in AD.  Falls back to dsquery if the Powershell RSAT tools are not installed
+#>
+function Get-ADUsernameByEmail {
+    [CmdletBinding()]
+
+    Param(
+        [Parameter(Mandatory=$true)][string]$email
+    )
+
+    Begin {
+        $useDSQUERY = $false
+        $username = $null
+
+        $domains = @()
+        ForEach($forest in $config.ADDomains) {
+            $domains += (Get-ADForest $forest).domains
+        }
+
+        if(!(Get-Command Get-ADUser)) {
+            Write-Log -Message "Powershell RSAT tools not installed, using DSQUERY"
+            $useDSQUERY = $true
+        }
+    }
+
+    Process {
+
+        if($useDSQUERY) {
+            # TODO: ADD THE DSQUERY ALTERNATIVE TO THE BELOW
+        } else {
+            $user = $null
+            ForEach($domain in $domains) {
+                $search = "*$email*"
+                $user = Get-ADUser -Filter { proxyAddresses -like $search } -Properties proxyAddresses -Server $domain
+                if($user) {
+                    Write-Log -Message "Found username $($user.sAMAccountName) for $email in the $domain domain"
+                    break
+                }
+            }
+            $username = $user.sAMAccountName
+        }
+    }
+
+    End {
+        return $username
     }
 }
 
@@ -1392,10 +1499,34 @@ function Write-ReportLog {
     )
 
     $date = '{0:yyyy-MM-dd hh:mm:ss}' -f (Get-Date)
-    $logPath = "\\mtlwpplogxm01\c$\Logs\phishing_report.log"
+    $logPath = "\\mtlwpplogxm01\c$\Logs\phishing_report.log" # TODO: MOVE THIS TO THE CONFIG FILE
     "DATE=$date | SENDER=$MailFrom | SUBJECT=$MailSubject" | Out-File $logPath -Append
     #Get-Content $logPath
     #exit
+}
+
+<# 
+Checks Wildfire for information on a hash, if the hash is not available
+it will submit the file if its in the approved extension list
+#>
+function Get-WildFireReport {
+    Param(
+        [Parameter(Mandatory=$true)][string]$apikey,
+        [Parameter(Mandatory=$false)][string]$hash,
+        [Parameter(Mandatory=$false)][string]$filePath
+    )
+
+    process {
+
+        Write-Log -Message "Checking Wildfire score for $hash"
+        $RequestParams = $DefaultRequestParams.Clone()
+        $RequestParams.Add('Uri', 'https://wildfire.paloaltonetworks.com/publicapi/get/report')
+        $RequestParams.Add('Method', 'POST')
+        $RequestParams.Add('Body', @{'apikey'=$apikey;'hash'=$hash;'format'='xml'})
+        $RequestParams.Remove('ContentType')
+        $result = Invoke-RestMethod @RequestParams
+        #$result.wildfire.
+    }
 }
 
 
