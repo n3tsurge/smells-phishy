@@ -24,9 +24,9 @@ I am not responsible if you wedge your system using this.
 -	Recently updated domain detection
 -	Free CA detection (usage of LetsEncrypt for example)
 -	VirusTotal detection for all:
- -	File Hashes
- -	URLS
- -	Domains
+    - File Hashes
+    - URLS
+    - Domains
 -	Detects tracking pixels
 -	Detects Base Striker attacks
 -	Detects Executive spoofing
