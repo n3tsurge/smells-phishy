@@ -1,11 +1,11 @@
 {
     "VirusTotal": {
-        "Enabled": true,
+        "Enabled": false,
         "PositiveThreshold": 3,
         "APIKey": ""
     },
     "URLScan": {
-        "Enabled": true,
+        "Enabled": false,
         "ScanWait": 30,
         "APIKey": "",
         "MaliciousThreshold": 5
@@ -17,38 +17,39 @@
         "RecentUpdateDays": 30
     },
     "HaveIBeenPwned": {
-        "Enabled": true
+        "Enabled": false
     },
     "Sucuri": {
-        "Enabled": true
+        "Enabled": false
     },
     "PhishTank": {
-        "Enabled": true,
+        "Enabled": false,
         "APIKey": ""
     },
-    "Certly": {
+    "SentinelOne": {
         "Enabled": true,
+        "APIKey": "",
+        "TenantURL": ""
+    },
+    "Certly": {
+        "Enabled": false,
+        "APIKey": ""
+    },
+    "Wildfire": {
+        "Enabled": false,
         "APIKey": ""
     },
     "Proxy": "",
-    "ProxyUseDefaultCredentials": false,
-    "DomainWhitelist": [
-        "schemas.microsoft.com",
-        "www.w3.org",
-        "ns.adobe.com",
-        "radpdf.com",
-        "dynaforms.com",
-        "purl.org",
-        "neevia.com",
-        "twitter.com"
-    ],
-    "ADDomains": [
-        "mydomain.com"
-    ],
-    "ExecutiveCheck": true,
-    "Executives": [
-        "mtest"
-    ],
+    "ProxyUseDefaultCredentials": true,
+    "DomainWhitelist": [],
+    "ADDomains": [],
+    "Checks": {
+        "EncodedSubject": true,
+        "Executives": false,
+        "ShortURLs": true
+    },
+    "ResolveDomainsFromIP": false,    
+    "Executives": [],
     "Scoring": {
         "pattern_weight": 5,
         "subject_weight": 5,
@@ -60,19 +61,20 @@
         "whois_weight": 10
     },
     "Report": {
-        "Recipient": "me@mydomain.com",
+        "Recipient": "infosec@contoso.com",
         "SendReport": true
     },
     "SourceMailbox": {
-        "username": "DOMAIN\\phishing",
-        "password": "MYAMAZINGLYSTRONGPASSWORDISSOSTRONG",
-        "address": "phishing@mydomain.com",
-        "mark_as_read": true,
-        "send_thank_you": true,
+        "username": "CONTOSO\\phishing",
+        "password": "mysupersecretpassword",
+        "address": "phishing@contoso.com",
+        "mark_as_read": false,
+        "send_thank_you": false,
         "polling_interval": 15
     },
     "Exchange": {
-        "WebServiceURL": "https://exchange.mydomain.com/EWS/Exchange.asmx",
-        "WebServiceDLL": "C:/Program Files/Microsoft/Exchange/Web Services/2.2/Microsoft.Exchange.WebServices.dll"
-    }
+        "WebServiceURL": "https://exchange.mycompany.com/EWS/Exchange.asmx",
+        "WebServiceDLL": ".\\Microsoft.Exchange.WebServices.dll"
+    },
+    "TrainingWhitelist": []
 }
