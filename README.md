@@ -36,9 +36,9 @@ I am not responsible if you wedge your system using this.
 -	Detects subject encoding
 -	Detects Gmail protection methods as an indicator
 -	Detects URL shorteners
- -	Will unwrap shortened URLs to find the true destination
+    - Will unwrap shortened URLs to find the true destination
 -	Detects rewrapped URLs
- -	Will unwrap the wrapped URls too find the true destination
+    - Will unwrap the wrapped URls too find the true destination
 -	Detects Reply To mistmatches
 -	Screenshots all URLs for a snapshot of what the site looks like
 
