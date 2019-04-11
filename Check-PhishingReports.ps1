@@ -211,8 +211,11 @@ function Get-NewMessages {
                 New-Item $workPath -Type Directory | Out-Null
                 New-Item $workPath"/Attachments" -Type Directory | Out-Null
                 New-Item $workPath"/Screenshots" -Type Directory | Out-Null
+                New-Item $workpath"/ThreatData" -Type Directory | Out-Null
+                $archiveFile = $guid+".zip"
 
                 $indicators = @();
+                $threatHunt = @();
 
                 $observables = @{
                     'ips' = @();
@@ -441,12 +444,59 @@ function Get-NewMessages {
                 foreach($address in $observables.addresses) {
                     $username = Get-ADUsernameByEmail -Email $address
                     if($username) {
+                        Write-Log -Message "Checking Anti-Virus status for user $username"
                         $missingAV = (Get-S1HostByUsername -Username $username).data -eq $null
                         if ($missingAV) {
-                            $indicators += "User <b>$username</b> appears to be missing Anti-Virus"
+                            $message = "User $username appears to be missing Anti-Virus"
+                            Write-Log -Message $message -ForeGroundColor Red
+                            $indicators += $message
                         }
                     }
-                    #$hasAV = if(Get-S1HostByUsername -Username (Get-ADUsernameByEmail))
+                }
+
+                if($config.SentinelOne.DeepVisibility) {
+                    # Run a search for all domains in Deep Visibility
+                    foreach($ip in $observables.ips) {
+                        Write-Log -Message "Performing IOC hunt for $ip"
+                        $hits = Get-S1DeepVisibilityHits -Indicator $ip -iocType "ip" -workPath $workPath
+                        if($hits -gt 0) {
+                            $threatHunt += "Observed users hitting the $(Defang $ip) indicator $hits times"
+                        }
+                    }
+
+                     # Run a search for all domains in Deep Visibility
+                    foreach($domain in $observables.domains) {
+                        Write-Log -Message "Performing IOC hunt for $domain"
+                        $hits = Get-S1DeepVisibilityHits -Indicator $domain -iocType "domain" -workPath $workPath
+                        if($hits -gt 0) {
+                            $threatHunt += "Observed users making a DNS request for $(Defang $domain) $hits times"
+                        }
+                    }
+
+                    # Run a search for all urls in Deep Visibility
+                    foreach($url in $observables.urls) {
+                        Write-Log -Message "Performing IOC hunt for $url"
+                        $hits = Get-S1DeepVisibilityHits -Indicator $url -iocType "url" -workPath $workPath
+                        if($hits -gt 0) {
+                            $threatHunt += "Observed users hitting the url $(Defang $url) $hits times"
+                        }
+                    }
+
+                    # Run a search for all md5 in Deep Visibility
+                    foreach($hash in $observables.hashes) {
+                        Write-Log -Message "Performing IOC hunt for $hash"
+                        if($hash.Length -eq 32) { $iocType = "md5" }
+                        if($hash.Length -eq 40) { $iocType = "sha1" }
+                        if($hash.Length -eq 128) { $iocType = "sha256" }
+                        $hits = Get-S1DeepVisibilityHits -Indicator $hash -iocType $iocType -workPath $workPath
+                        if($hits -gt 0) {
+                            $threatHunt += "Observed users hitting the $(Defang $hash) indicator $hits times"
+                        }
+                    }
+
+                    # Compress all the threat data results and attached them as a zip file to the email
+                    Compress-Archive -Path $workPath"/ThreatData" -CompressionLevel Optimal -Destination $workPath"/threatdata.zip"
+
                 }
 
                 if($config.Report.SendReport) {
@@ -462,6 +512,11 @@ function Get-NewMessages {
                     $report += "<h2>Scoring Indicators</h2>"
                     ForEach($indicator in $indicators) {
                         $report += "<li>$indicator</li>"
+                    }
+
+                    $report += "<h2>IOC hits</h2>"
+                    ForEach($hunt in $threatHunt) {
+                        $report += "<li>$hunt</li>"
                     }
 
                     $report += "<h2>Observables</h2>"
@@ -516,7 +571,11 @@ function Get-NewMessages {
 
                     $report += "<h3>Screenshots</h3>"
 
-                    Send-Report -MailTo $config.Report.Recipient -Report $report -EmailSubject $_.Subject -Service $ExchangeService -ScreenshotsPath $workPath"/Screenshots/"
+                    Send-Report -MailTo $config.Report.Recipient -Report $report -EmailSubject $_.Subject -Service $ExchangeService -ScreenshotsPath $workPath"/Screenshots/" -ThreatDataFile $workPath"/threatdata.zip"
+
+                    # Compress all artifacts of the analysis
+                    Compress-Archive -Path $workPath -CompressionLevel Optimal -Destination "$scriptPath/Analysis/$guid.zip"
+                    Remove-Item $workPath -Recurse
                 }
 
                 if($config.SourceMailbox.mark_as_read) {
@@ -800,6 +859,7 @@ function Send-Report {
         [string]$Report,
         [string]$EmailSubject,
         [string]$ScreenshotsPath,
+        [string]$ThreatDataFile,
         [Microsoft.Exchange.WebServices.Data.ExchangeService]$Service
     )
 
@@ -820,6 +880,9 @@ function Send-Report {
             $attachment.ContentId = $attachment.Name
         }
     }
+
+    $threatData = Get-ChildItem $ThreatDataFile
+    $email.Attachments.AddFileAttachment($threatData.Name, $ThreatDataFile) | Out-Null
 
     $email.body = $Report
     [void]$email.ToRecipients.Add($MailTo)
@@ -1363,7 +1426,6 @@ function Get-S1HostByUsername {
     Begin {
 
         $url = "$($config.SentinelOne.TenantUrl)/web/api/v2.0/agents?lastLoggedInUserName__contains=$username&apitoken=$($config.SentinelOne.ApiKey)"
-        $url
         $RequestParams = $DefaultRequestParams.Clone()
         $RequestParams.Add('Uri', $url)
         $RequestParams.Add('Method', 'GET')
@@ -1379,6 +1441,121 @@ function Get-S1HostByUsername {
     End {
 
     }
+}
+
+<# 
+Searches SentinelOne Deep Visibility for indicators of compromise being
+used by users
+#>
+function Get-S1DeepVisibilityHits {
+    [CmdletBinding()]
+
+    Param(
+        [Parameter(Mandatory=$true)][string]$indicator,
+        [Parameter(Mandatory=$true)][string]$iocType,
+        [Parameter(Mandatory=$false)][string]$workPath
+    )
+
+    Begin {
+
+        $apiToken = $config.SentinelOne.APIKey
+
+        if($iocType -eq "domain") {
+            $query = 'DnsRequest CONTAINS "'+$indicator+'"'
+        }
+        if($iocType -eq "url") {
+            $query = 'NetworkURL CONTAINS "'+$indicator+'"'
+        }
+        if($iocType -eq "md5") {
+            $query = 'FileMD5 = "'+$indicator+'"'
+        }
+        if($iocType -eq "sha1") {
+            $query = 'FileMD5 = "'+$indicator+'"'
+        }
+        if($iocType -eq "sha256") {
+            $query = 'FileMD5 = "'+$indicator+'"'
+        }
+        if($iocType -eq "ip") {
+            $query = 'DstIp = "'+$indicator+'" OR SrcIp = "'+$indicator+'" OR DNSResponse CONTAINS "'+$indicator+'"'   
+        }
+    }
+
+    Process {
+
+        # Create the query body
+        $fromDate = Get-Date -Hour 0 -Minute 00 -Second 00 -UFormat '+%Y-%m-%dT%H:%M:%S.000Z'
+        $toDate = Get-Date -Hour 23 -Minute 59 -Second 59 -UFormat '+%Y-%m-%dT%H:%M:%S.000Z'
+
+        $body = @{
+             toDate = $toDate;
+             fromDate = $fromDate;
+             queryType = @("events");
+             query = $query;
+             tenant = $true;
+             siteIds = @();
+             groupIds = @();
+        }
+
+        $body = $body | ConvertTo-Json
+
+        $RequestParams = $DefaultRequestParams.Clone()
+        $RequestParams.Add('uri', "https://arifleet.sentinelone.net/web/api/v2.0/dv/init-query?apiToken=$apiToken")
+        $RequestParams.Add('method', 'POST')
+        $RequestParams.Add('body', $body)
+
+        # Create the query
+        $queryId = $null
+        $result = Invoke-RestMethod @RequestParams
+        if($result) { $queryId = $result.data.queryId }
+
+        # Poll for query completion
+        $RequestParams = $DefaultRequestParams.Clone()
+        $RequestParams.Add('uri', "https://arifleet.sentinelone.net/web/api/v2.0/dv/query-status?apiToken=$apiToken&queryId=$queryId")
+        $RequestParams.Add('method', 'GET')
+
+        $queryFinished = $false
+        while(!$queryFinished) {
+            $result = Invoke-RestMethod @RequestParams
+            if ($result.data.responseState -eq "FINISHED") {
+                $queryFinished = $true
+                Sleep 5;
+            }
+        }
+
+        # Pull down the results
+        $RequestParams = $DefaultRequestParams.Clone()
+        $RequestParams.Add('uri', "https://arifleet.sentinelone.net/web/api/v2.0/dv/events?apiToken=$apiToken&queryId=$queryId&limit=100")
+        $RequestParams.Add('method', 'GET')
+        $result = Invoke-RestMethod @RequestParams
+
+        if($config.SentinelOne.SaveDVResults) {
+            $data = $result.data
+            if($result.pagination.nextCursor) {
+                $nextCursor = $result.pagination.nextCursor
+                $allData = $false
+                while(!$allData) {
+                    $RequestParams.Uri = "https://arifleet.sentinelone.net/web/api/v2.0/dv/events?apiToken=$apiToken&queryId=$queryId&cursor=$nextCursor&limit=100"
+                    $result = Invoke-RestMethod @RequestParams
+                    $data += $result.data
+                    if(!$result.pagination.nextCursor) {
+                        $allData = $true
+                    } else {
+                        $nextCursor = $result.pagination.nextCursor
+                    }
+                }
+            } 
+
+            if($data.Length -gt 0) { 
+                $filename = "threat_hunt_"+$indicator.replace(".","_")+"_"+(Get-Date -UFormat "%Y%m%d")+".csv"
+                $data | Export-CSV $workPath"/ThreatData/"$filename -NoTypeInformation 
+            }
+        }
+    }
+
+    End {
+        return $result.pagination.totalItems
+    }
+
 }
 
 <# Grabs a users active directory username by looking for their e-mail
