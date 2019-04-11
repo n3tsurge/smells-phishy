@@ -1499,7 +1499,7 @@ function Get-S1DeepVisibilityHits {
         $body = $body | ConvertTo-Json
 
         $RequestParams = $DefaultRequestParams.Clone()
-        $RequestParams.Add('uri', "https://arifleet.sentinelone.net/web/api/v2.0/dv/init-query?apiToken=$apiToken")
+        $RequestParams.Add('uri', "$($config.SentinelOne.TenantUrl)/web/api/v2.0/dv/init-query?apiToken=$apiToken")
         $RequestParams.Add('method', 'POST')
         $RequestParams.Add('body', $body)
 
@@ -1510,7 +1510,7 @@ function Get-S1DeepVisibilityHits {
 
         # Poll for query completion
         $RequestParams = $DefaultRequestParams.Clone()
-        $RequestParams.Add('uri', "https://arifleet.sentinelone.net/web/api/v2.0/dv/query-status?apiToken=$apiToken&queryId=$queryId")
+        $RequestParams.Add('uri', "$($config.SentinelOne.TenantUrl)/web/api/v2.0/dv/query-status?apiToken=$apiToken&queryId=$queryId")
         $RequestParams.Add('method', 'GET')
 
         $queryFinished = $false
@@ -1524,7 +1524,7 @@ function Get-S1DeepVisibilityHits {
 
         # Pull down the results
         $RequestParams = $DefaultRequestParams.Clone()
-        $RequestParams.Add('uri', "https://arifleet.sentinelone.net/web/api/v2.0/dv/events?apiToken=$apiToken&queryId=$queryId&limit=100")
+        $RequestParams.Add('uri', "$($config.SentinelOne.TenantUrl)/web/api/v2.0/dv/events?apiToken=$apiToken&queryId=$queryId&limit=100")
         $RequestParams.Add('method', 'GET')
         $result = Invoke-RestMethod @RequestParams
 
@@ -1534,7 +1534,7 @@ function Get-S1DeepVisibilityHits {
                 $nextCursor = $result.pagination.nextCursor
                 $allData = $false
                 while(!$allData) {
-                    $RequestParams.Uri = "https://arifleet.sentinelone.net/web/api/v2.0/dv/events?apiToken=$apiToken&queryId=$queryId&cursor=$nextCursor&limit=100"
+                    $RequestParams.Uri = "$($config.SentinelOne.TenantUrl)/web/api/v2.0/dv/events?apiToken=$apiToken&queryId=$queryId&cursor=$nextCursor&limit=100"
                     $result = Invoke-RestMethod @RequestParams
                     $data += $result.data
                     if(!$result.pagination.nextCursor) {
