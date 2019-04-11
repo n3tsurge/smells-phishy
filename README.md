@@ -11,6 +11,44 @@ I am not responsible if you wedge your system using this.
 3. The script extracts all the observables, IPs, Emails, URLs, Domains, Attachments and runs them against reputation based tools
 4. The script gives the email a score out of 100 and sends a report to the designated security analyst.
 
+## New Features:
+
+•	Checks SentinelOne to see if the recipient has AV installed
+•	Searches SentinelOne Deep Visibility for IOC hits and shares them in the e-mail report
+
+## Features/Detections:
+
+-	Extracts all URLs, Domains, IPs, Emails, File hashes (MD5, SHA1, SHA256)
+-	Checks all emails against HaveIBeenPwned
+-	Newly Registered Domain detection
+-	Recently updated domain detection
+-	Free CA detection (usage of LetsEncrypt for example)
+-	VirusTotal detection for all:
+ -	File Hashes
+ -	URLS
+ -	Domains
+-	Detects tracking pixels
+-	Detects Base Striker attacks
+-	Detects Executive spoofing
+-	Detects suspicious subjects
+-	Detects suspicious phrases
+-	Detects suspicious patterns
+-	Detects subject encoding
+-	Detects Gmail protection methods as an indicator
+-	Detects URL shorteners
+ -	Will unwrap shortened URLs to find the true destination
+-	Detects rewrapped URLs
+ -	Will unwrap the wrapped URls too find the true destination
+-	Detects Reply To mistmatches
+-	Screenshots all URLs for a snapshot of what the site looks like
+
+## Coming Soon
+
+-	DMARC/DKIM validation
+-	Parallel processing of e-mails
+- Wild Fire integration
+
+
 ## Installation
 
 1. Create a phishing mailbox for users to send mail to
