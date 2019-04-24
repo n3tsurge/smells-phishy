@@ -10,6 +10,11 @@
         "APIKey": "",
         "MaliciousThreshold": 5
     },
+    "AbuseDB": {
+        "Enabled": true,
+        "token": "",
+        "confidenceThreshold": 25
+    },
     "JSONWhois": {
         "Enabled": true,
         "token": "",
