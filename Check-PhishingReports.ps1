@@ -342,6 +342,15 @@ function Get-NewMessages {
                                 $threatScore += $config.Scoring.ip_weight
                             }
                         }
+                        if($config.AbuseDB.Enabled) {
+                            $result = Get-AbuseDBCheck -ipAddress $ip
+                            if($result.abuseConfidenceScore -ge $config.AbuseDB.confidenceThreshold) {
+                                $message = "IP Address $(Defang $ip) has a high abuse confidence ($($result.abuseConfidenceScore)/100) on AbuseDB"
+                                Write-Log -Message $message -ForeGroundColor Red
+                                $indicators += $message
+                                $threatScore += $config.Scoring.ip_weight
+                            }
+                        }
                     }
                 }
 
@@ -824,7 +833,8 @@ function Invoke-ExtractObservables {
         ForEach($domain in $observables.domains) {
             if($domain) {
                 if($config.ResolveDomainsFromIP) {
-                    $observables.ips += (Resolve-DnsName $domain).IP4Address
+                    $ip = try { (Resolve-DnsName $domain).IP4Address } catch { $null }
+                    if($ip) { $observables.ips += $ip }
                 }
             }
         }
@@ -1383,6 +1393,32 @@ function Get-SucuriScanReport {
 }
 
 <# 
+Checks AbuseDB reports for an IP address
+#>
+function Get-AbuseDBCheck {
+    [CmdletBinding()]
+
+    Param(
+        [Parameter(Mandatory=$true)][string]$ipAddress
+    )
+
+    Begin {
+        $RequestParams = $DefaultRequestParams.Clone()
+    }
+
+    Process {
+        $url = "https://api.abuseipdb.com/api/v2/check?ipAddress=$ipAddress&maxAgeInDays=90"
+        $RequestParams.Add('Method', 'Get')
+        $RequestParams.Add('Uri', $url)
+        $RequestParams.Add('Headers', @{ Key = $config.AbuseDB.token })
+        $RequestParams.Add('ErrorVariable', 'RESTError')
+
+        $result = Invoke-RestMethod @RequestParams
+        return $result.data
+    }
+}
+
+<# 
 Checks the HaveIBeenPwned API to see if an email address has been
 pwned at some point
 #>
@@ -1394,10 +1430,7 @@ function Get-HIBPStatus {
     )
 
     Begin {
-        $RequestParams = @{}
-
-        $RequestParams.Add('Proxy', 'http://192.168.150.148:8080')
-        $RequestParams.Add('ProxyUseDefaultCredentials', $true)
+        $RequestParams = $DefaultRequestParams.Clone()
     }
 
     Process {
@@ -1461,10 +1494,10 @@ function Get-S1DeepVisibilityHits {
         $apiToken = $config.SentinelOne.APIKey
 
         if($iocType -eq "domain") {
-            $query = 'DnsRequest CONTAINS "'+$indicator+'"'
+            $query = 'DnsRequest CONTAINS "'+$indicator+'" OR NetworkUrl CONTAINS "'+$indicator+'"'
         }
         if($iocType -eq "url") {
-            $query = 'NetworkURL CONTAINS "'+$indicator+'"'
+            $query = 'NetworkURL = "'+$indicator+'"'
         }
         if($iocType -eq "md5") {
             $query = 'FileMD5 = "'+$indicator+'"'
@@ -1705,7 +1738,6 @@ function Get-WildFireReport {
         #$result.wildfire.
     }
 }
-
 
 While (1) {
     Write-Log -Message "Polling target mailbox"
