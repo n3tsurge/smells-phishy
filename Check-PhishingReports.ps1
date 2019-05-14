@@ -350,6 +350,13 @@ function Get-NewMessages {
                                 $indicators += $message
                                 $threatScore += $config.Scoring.ip_weight
                             }
+
+                            if($result.totalReports -ge $config.AbuseDB.reportThreshold) {
+                                $message = "IP Address $(Defang $ip) exceeds the report threshold of $($config.AbuseDB.reportThreshold) with $($result.totalReports) on AbuseDB"
+                                Write-Log -Message $message -ForeGroundColor Red
+                                $indicators += $message
+                                $threatScore += $config.Scoring.ip_weight
+                            }
                         }
                     }
                 }
@@ -759,12 +766,10 @@ function Invoke-ExtractObservables {
         $filePath = $scriptPath+"\Analysis\"+$guid+"\Attachments\"+$Attachment.Name
         $observables.attachements += $Attachment.Name
         $Attachment.Load($filePath)
-        $hashMD5 = (Get-FileHash $filePath -Algorithm MD5).hash
-        $hashSHA1 = (Get-FileHash $filePath -Algorithm SHA1).hash
-        $hashSHA256 = (Get-FileHash $filePath -Algorithm SHA256).hash
-        $observables.hashes += $hashMD5
-        $observables.hashes += $hashSHA1
-        $observables.hashes += $hashSHA256
+        $observables.hashes += (Get-FileHash $filePath -Algorithm MD5).hash
+        $observables.hashes += (Get-FileHash $filePath -Algorithm SHA1).hash
+        $observables.hashes += (Get-FileHash $filePath -Algorithm SHA256).hash
+        $observables.hashes += (Get-SSDeep $filePath)
         $observables.urls += Invoke-ExtractURLs -Data (Get-Content $filePath -Raw)
 
     }
@@ -1371,6 +1376,30 @@ function Unshorten-URL {
         
     }
 }
+
+<# 
+Grabs the SSDEEP hash of a file
+#>
+function Get-SSDeep {
+    [Cmdletbinding()]
+
+    Param(
+        [Parameter(Mandatory=$true)][string]$File
+    )
+
+    Begin {}
+
+    Process {
+        $hash = .\utilities\ssdeep\ssdeep.exe $File
+        $hash = $hash.split("`r`n")[2]
+        $hash = $hash.split(',')[0]    
+    }
+
+    End {
+        return $hash
+    }
+}
+
 
 function Get-SucuriScanReport {
     [CmdletBinding()]
