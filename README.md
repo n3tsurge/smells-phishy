@@ -13,8 +13,9 @@ I am not responsible if you wedge your system using this.
 
 ## New Features:
 
-•	Checks SentinelOne to see if the recipient has AV installed
-•	Searches SentinelOne Deep Visibility for IOC hits and shares them in the e-mail report
+- Checks SentinelOne to see if the recipient has AV installed
+- Searches SentinelOne Deep Visibility for IOC hits and shares them in the e-mail report
+- Performs SSDeep hashing on attachments
 
 ## Features/Detections:
 
