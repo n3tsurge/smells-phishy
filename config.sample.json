@@ -51,7 +51,8 @@
     "Checks": {
         "EncodedSubject": true,
         "Executives": false,
-        "ShortURLs": true
+        "ShortURLs": true,
+        "ssdeep": true
     },
     "ResolveDomainsFromIP": false,    
     "Executives": [],
