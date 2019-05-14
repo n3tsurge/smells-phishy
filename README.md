@@ -16,6 +16,7 @@ I am not responsible if you wedge your system using this.
 - Checks SentinelOne to see if the recipient has AV installed
 - Searches SentinelOne Deep Visibility for IOC hits and shares them in the e-mail report
 - Performs SSDeep hashing on attachments
+- Wildfire hash checks
 
 ## Features/Detections:
 
@@ -47,7 +48,7 @@ I am not responsible if you wedge your system using this.
 
 -	DMARC/DKIM validation
 -	Parallel processing of e-mails
-- Wild Fire integration
+- Wild Fire sandbox posts
 
 
 ## Installation
