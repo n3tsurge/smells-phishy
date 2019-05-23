@@ -917,7 +917,7 @@ function Send-Report {
         }
     }
 
-    if($ThreatData) {
+    if($ThreatDataFile) {
         $threatData = Get-ChildItem $ThreatDataFile
         $email.Attachments.AddFileAttachment($threatData.Name, $ThreatDataFile) | Out-Null
     }
