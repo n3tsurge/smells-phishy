@@ -499,20 +499,27 @@ function Get-NewMessages {
                     }
 
                     # Run a search for all md5 in Deep Visibility
-                    foreach($hash in $observables.hashes) {
-                        Write-Log -Message "Performing IOC hunt for $hash"
-                        if($hash.Length -eq 32) { $iocType = "md5" }
-                        if($hash.Length -eq 40) { $iocType = "sha1" }
-                        if($hash.Length -eq 128) { $iocType = "sha256" }
-                        $hits = Get-S1DeepVisibilityHits -Indicator $hash -iocType $iocType -workPath $workPath
-                        if($hits -gt 0) {
-                            $threatHunt += "Observed users hitting the $(Defang $hash) indicator $hits times"
+                    if($config.SentinelOne.Enabled) {
+                        foreach($hash in $observables.hashes) {
+                            Write-Log -Message "Performing IOC hunt for $hash"
+                            if($hash.Length -eq 32) { $iocType = "md5" }
+                            if($hash.Length -eq 40) { $iocType = "sha1" }
+                            if($hash.Length -eq 128) { $iocType = "sha256" }
+
+                            # Ignore SSDEEP hashes - SentinelOne doesn't support it
+                            if($hash -notcontains ":") {
+                                $hits = Get-S1DeepVisibilityHits -Indicator $hash -iocType $iocType -workPath $workPath
+                            }
+                            if($hits -gt 0) {
+                                $threatHunt += "Observed users hitting the $(Defang $hash) indicator $hits times"
+                            }
                         }
                     }
 
-                    # Compress all the threat data results and attached them as a zip file to the email
-                    Compress-Archive -Path $workPath"/ThreatData" -CompressionLevel Optimal -Destination $workPath"/threatdata.zip"
-
+                    if($config.SentinelOne.SaveDVResults) {
+                        # Compress all the threat data results and attached them as a zip file to the email
+                        Compress-Archive -Path $workPath"/ThreatData" -CompressionLevel Optimal -Destination $workPath"/threatdata.zip"
+                    }
                 }
 
                 if($config.Report.SendReport) {
@@ -587,7 +594,11 @@ function Get-NewMessages {
 
                     $report += "<h3>Screenshots</h3>"
 
-                    Send-Report -MailTo $config.Report.Recipient -Report $report -EmailSubject $_.Subject -Service $ExchangeService -ScreenshotsPath $workPath"/Screenshots/" -ThreatDataFile $workPath"/threatdata.zip"
+                    if($config.SentinelOne.SaveDVResults) {
+                        Send-Report -MailTo $config.Report.Recipient -Report $report -EmailSubject $_.Subject -Service $ExchangeService -ScreenshotsPath $workPath"/Screenshots/" -ThreatDataFile $workPath"/threatdata.zip"
+                    } else {
+                        Send-Report -MailTo $config.Report.Recipient -Report $report -EmailSubject $_.Subject -Service $ExchangeService -ScreenshotsPath $workPath"/Screenshots/"
+                    }
 
                     # Compress all artifacts of the analysis
                     Compress-Archive -Path $workPath -CompressionLevel Optimal -Destination "$scriptPath/Analysis/$guid.zip"
@@ -618,7 +629,7 @@ function Get-NewMessages {
 function Invoke-ExtractObservables {
     Param(
         [Microsoft.Exchange.WebServices.Data.Attachment]$Attachment,
-        [Hashtable]$Observables=$null,
+        [Hashtable]$observables=$null,
         [string]$guid
     )
 
@@ -627,8 +638,6 @@ function Invoke-ExtractObservables {
     $Attachment.Load()
     if($Attachment.Item) {
         $Message = $Attachment.Item
-
-        $Message
 
         # Extract IP Addresses from the Message Header
         $observables.ips += Invoke-ExtractIPs -Data $Message.InternetMessageHeaders
@@ -669,7 +678,7 @@ function Invoke-ExtractObservables {
         }
 
         Write-Log -Message "Checking for shortened URLs"
-        # Checck if any of the URLs are shortened
+        # Check if any of the URLs are shortened
         ForEach($url in $observables.urls) {
             $data = Unshorten-URL $url
             if($data -ne $url) {
@@ -806,32 +815,45 @@ function Invoke-ExtractObservables {
 
     $observables.addresses = $filtered_emails | Select -Uniq
 
-    #Write-Host $filtered_urls.Count
     $observables.urls = $filtered_urls | Select -Uniq
 
     # Dedup the URLs and extract the domains from the URLs
     $observables.urls = $observables.urls | Select -Uniq
 
+    # Normalize all the slashes
+    if($observables.urls.Count -gt 0) {
+        $observables.urls = $observables.urls.replace('\','/')
+    }
+
     # Extract the domains from the URLs
     $observables.urls | % {
         # Add the domain if it isn't already in the list
         if($_ -like "*http*") {
-            $observables.domains += (([System.URI]$_).Authority)
+            $domain = ([System.URI]$_).Authority
+            if($observables.domains -notcontains $domain) {
+                $observables.domains += ($domain)
+            }            
         } else {
-
             # Some URLs don't have a protocol in the URI
             # add one so System.URI can do its job
             $url = "http://"+$_
-            $observables.domains += (([System.URI]$_).Authority)
+            $domain = ([System.URI]$_).Authority
+            if($observables.domains -notcontains $domain) {
+                $observables.domains += ($domain)    
+            }
         }
     }
 
     # Get domains from email addresses
     if($observables.addresses) {
         ForEach($address in $observables.addresses) {
-            $observables.domains += ($address -Split "@")[1]
+            $domain = ($address -Split "@")[1]
+            $observables.domains += $domain
         }
     }
+
+    # Dedupe domains
+    $observables.domains = [array]($observables.domains | Sort-Object | Select -Uniq)
 
     # Resolve all the domains to their IP address
     if($observables.domains) {
@@ -846,9 +868,8 @@ function Invoke-ExtractObservables {
     }
 
     # Dedupe IPs and Domains again
-    $observables.ips = $observables.ips | Select -Uniq
-    $observables.domains = $observables.domains | Select -Uniq
-    
+    $observables.ips = [array]($observables.ips | Sort-Object | Select -Uniq)
+
     return $observables
 }
 
@@ -896,8 +917,10 @@ function Send-Report {
         }
     }
 
-    $threatData = Get-ChildItem $ThreatDataFile
-    $email.Attachments.AddFileAttachment($threatData.Name, $ThreatDataFile) | Out-Null
+    if($ThreatData) {
+        $threatData = Get-ChildItem $ThreatDataFile
+        $email.Attachments.AddFileAttachment($threatData.Name, $ThreatDataFile) | Out-Null
+    }
 
     $email.body = $Report
     [void]$email.ToRecipients.Add($MailTo)
@@ -946,7 +969,10 @@ function Invoke-ExtractURLs {
         [Parameter(Mandatory=$true)][string]$Data
     )
 
-    $urls = ((Select-String '\b(?:(?:https?|ftp|file)://|www\.|ftp\.)(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[-A-Z0-9+&@#\*/%=~_|$?!:,.])*(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[A-Z0-9+&@#\*/%=~_|$])' -AllMatches -Input $Data).Matches.Value)
+    $pattern = "\b(https?|ftp|file|skype|slack):(\/\/|.*)(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&\/\/=]*)\b"
+    #$pattern = "\b(?:(?:https?|ftp|file)://|www\.|ftp\.)(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[-A-Z0-9+&@#\*/%=~_|$?!:,.])*(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[A-Z0-9+&@#\*/%=~_|$])
+
+    $urls = ((Select-String $pattern -AllMatches -Input $Data).Matches.Value)
     $urls = $urls | Select -Uniq
     return $urls
 }
