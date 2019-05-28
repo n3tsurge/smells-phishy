@@ -243,7 +243,7 @@ function Get-NewMessages {
 
                 # For every attachment extract the observables
                 ForEach ($attachment in $_.Attachments) {
-                    $observables = Invoke-ExtractObservables -Attachment $attachment -Observables $observables -Guid $guid
+                    $observables = Invoke-ExtractObservables -Attachment $attachment -Observables $observables -Guid $guid                    
                 }
 
                 # Start scoring the email
@@ -635,6 +635,7 @@ function Invoke-ExtractObservables {
 
     # If the attachment is another message
     # Follow the rabbit down the hole
+    
     $Attachment.Load()
     if($Attachment.Item) {
         $Message = $Attachment.Item
@@ -647,7 +648,7 @@ function Invoke-ExtractObservables {
         Add-Type -AssemblyName System.Web
         $BodyData = [System.Web.HttpUtility]::HtmlDecode($Message.Body)
         $observables.urls += Invoke-ExtractURLs -Data $BodyData
-
+        
         # Check if any of the URLS were defanged by Gmail
         if($BodyData -match 'defang_data-saferedirecturl') {
             $observables.gmail_defang = $Matches.Count
@@ -660,42 +661,9 @@ function Invoke-ExtractObservables {
             }
         }
 
-        # Check if any of the URLs are Websense Rewrapped URLs
-        # if they are find the URL that was rewrapped
-        # Note: Only works with Websense
-        Write-Log -Message "Checking for Websense wrapped URLs"
-        ForEach($url in $observables.urls) {
-            if($url -like "*webdefence.global.blackspider.com/urlwrap*") {
-
-                # Extract the real URL from the page
-                $observables.urls += Invoke-ExtractWrappedURL -WebsenseURL $url
-
-                # Remove the Wrapper URL
-                $observables.urls = $observables.urls -ne $url
-
-                $observables.rewrapped = $true
-            }
-        }
-
-        Write-Log -Message "Checking for shortened URLs"
-        # Check if any of the URLs are shortened
-        ForEach($url in $observables.urls) {
-            $data = Unshorten-URL $url
-            if($data -ne $url) {
-
-                # Add the real URL
-                $observables.urls += $data
-
-                # Remove the shortener
-                $observables.urls = $observables.urls -ne $url
-
-                $observables.shorteners = $true
-            }
-        }
-
         # Extract the email subject
         $observables.subjects += $Message.Subject
-
+        
         # Extract all emails
         $observables.addresses += $Message.Sender.Address
         if($Message.ReplyTo.Count -gt 0) {
@@ -703,20 +671,19 @@ function Invoke-ExtractObservables {
         }
         $observables.addresses += Invoke-ExtractEmailAddresses -Data $BodyData
         $observables.addresses += Invoke-ExtractEmailAddresses -Data $Message.InternetMessageHeaders
-
+        
         # Check the body for base-striker 
         $matches = (Select-String '(<base href.*)' -AllMatches -Input $message.Body.Text).Matches.Value
         if($matches.count -gt 0) {
             $observables.base_striker = $true
         }
-
+        
         # Check the body for the existence of any tracking pixels
         $matches = (Select-String '(<img.*(?=.*?src="(.*?)")(?=.*?(width\=\"1\"))(?=.*?(height\=\"1\")))' -AllMatches -Input $message.Body.Text).Matches
-        $matches.Groups
         if($matches.Groups.Count -ge 4) {
             $observables.tracking_pixel = $true
         }
-
+        
         # Check to see if any patterns are matched in the Message Body
         ForEach($pattern in $suspicious_patterns) {
             $matches = ((Select-String $pattern -AllMatches -Input $message.Body.Text).Matches.Value)
@@ -724,7 +691,7 @@ function Invoke-ExtractObservables {
                 $observables.pattern_matches += $matches
             }
         }
-
+        
         # Check the body against well know phrases
         ForEach($phrase in $suspicious_phrases) {
             $matches = ((Select-String $phrase -AllMatches -Input $message.Body.Text).Matches.Value)
@@ -732,7 +699,7 @@ function Invoke-ExtractObservables {
                 $observables.phrase_matches += $matches
             }
         }
-
+        
         # Check the subject against well know subjects
         # Check if the subject is encoded
         ForEach($subject in $suspicious_subjects) {
@@ -741,7 +708,7 @@ function Invoke-ExtractObservables {
                 $observables.subject_matches += $matches
             }
         }
-
+        
         # If the Message has any attachments, inspect those as well
         if($Message.HasAttachments) {
             $Attachments = $Message.Attachments
@@ -750,37 +717,69 @@ function Invoke-ExtractObservables {
                 $observables = Invoke-ExtractObservables -Attachment $attach -Observables $observables -Guid $guid
             }
         }
-
+        
         # Check if the reply-to matches the original sender
         if($Message.From.Addess -ne $Message.ReplyTo.Address) {
             $observables.reply_to_mismatch = $true
         }
-
+        
         # Check if the message headers have an encoded subject
-        if($config.Checks.EncodedSubject) {
-            
+        if($config.Checks.EncodedSubject) {          
             $matches = ((Select-String "ubject\:\s\=\?" -AllMatches -Input $Message.InternetMessageHeaders).Matches.Value)
-            $matches
             if($matches.count -gt 0) {
                 $observables.encoded_subject = $true
             }
         }
-
+        
         if($config.Checks.Executives) {
             $observables.executive_fraud = Check-ExecutiveFraud -Email $Message.From
         }
-
+        
     } else {
 
         $filePath = $scriptPath+"\Analysis\"+$guid+"\Attachments\"+$Attachment.Name
-        $observables.attachements += $Attachment.Name
+        $observables.attachments += $Attachment.Name
         $Attachment.Load($filePath)
         $observables.hashes += (Get-FileHash $filePath -Algorithm MD5).hash
         $observables.hashes += (Get-FileHash $filePath -Algorithm SHA1).hash
         $observables.hashes += (Get-FileHash $filePath -Algorithm SHA256).hash
         $observables.hashes += (Get-SSDeep $filePath)
         $observables.urls += Invoke-ExtractURLs -Data (Get-Content $filePath -Raw)
+    }
 
+    # Check if any of the URLs are Websense Rewrapped URLs
+    # if they are find the URL that was rewrapped
+    # Note: Only works with Websense
+    Write-Log -Message "Checking for Websense wrapped URLs"
+    ForEach($url in $observables.urls) {
+        if($url -like "*webdefence.global.blackspider.com*") {
+            Write-Log -Message "Discovered Websense wrapped URL $url, extracting final destination"
+
+            # Extract the real URL from the page
+            $observables.urls += Invoke-ExtractWrappedURL -WebsenseURL $url
+
+            # Remove the Wrapper URL
+            $observables.urls = $observables.urls | ? { $_ -notcontains $url }
+
+            $observables.rewrapped = $true
+        }
+    }
+   
+    Write-Log -Message "Checking for shortened URLs"
+    # Check if any of the URLs are shortened
+    ForEach($url in $observables.urls) {
+        $data = Unshorten-URL $url
+        if($data -ne $url) {
+            Write-Log -Message "Discovered shortened URL $url, extracting final destination"
+
+            # Add the real URL
+            $observables.urls += $data
+
+            # Remove the shortener
+            $observables.urls = $observables.urls | ? { $_ -notcontains $url }
+
+            $observables.shorteners = $true
+        }
     }
 
     # Remove any whitelisted domains from the list
@@ -798,6 +797,8 @@ function Invoke-ExtractObservables {
         }
     }
 
+
+    
     # Remove any whitelisted domains from the addresses list
     $filtered_emails = @()
     ForEach($address in $observables.addresses) {
@@ -813,16 +814,17 @@ function Invoke-ExtractObservables {
         }
     }
 
-    $observables.addresses = $filtered_emails | Select -Uniq
+    
+    $observables.addresses = [array]($filtered_emails | Sort-Object | Select -Uniq)
 
-    $observables.urls = $filtered_urls | Select -Uniq
+    $observables.urls = [array]($filtered_urls | Sort-Object | Select -Uniq)
 
     # Dedup the URLs and extract the domains from the URLs
-    $observables.urls = $observables.urls | Select -Uniq
+    $observables.urls = [array]($observables.urls | Sort-Object | Select -Uniq)
 
     # Normalize all the slashes
     if($observables.urls.Count -gt 0) {
-        $observables.urls = $observables.urls.replace('\','/')
+        $observables.urls = [array]($observables.urls.replace('(:(\/\/|\\\/|\/\\))','://'))
     }
 
     # Extract the domains from the URLs
@@ -860,7 +862,7 @@ function Invoke-ExtractObservables {
         ForEach($domain in $observables.domains) {
             if($domain) {
                 if($config.ResolveDomainsFromIP) {
-                    $ip = try { (Resolve-DnsName $domain).IP4Address } catch { $null }
+                    $ip = try { (Resolve-DnsName $domain -ErrorAction SilentlyContinue).IP4Address  } catch { $null }
                     if($ip) { $observables.ips += $ip }
                 }
             }
