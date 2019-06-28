@@ -11,12 +11,25 @@ I am not responsible if you wedge your system using this.
 3. The script extracts all the observables, IPs, Emails, URLs, Domains, Attachments and runs them against reputation based tools
 4. The script gives the email a score out of 100 and sends a report to the designated security analyst.
 
+## Coming Soon
+
+- Bitcoin wallet detection
+- Detecting Base64 encoded payloads in HTML attachments
+- Extension based scoring (via file extension and magic number)
+- MISP Integration
+- crt.sh Integration to assess certificate age
+- DMARC/DKIM validation
+- Parallel processing of e-mails
+- Wild Fire sandbox posts
+- Observable history (speeds up processing of similiar indicators)
+- Report history (when users report similiar e-mails just reply don't assess)
+
 ## New Features:
 
-- Checks SentinelOne to see if the recipient has AV installed
-- Searches SentinelOne Deep Visibility for IOC hits and shares them in the e-mail report
+- If you use SentinelOne you can check 
+    - SentinelOne to see if the recipient has AV installed
+    - Search SentinelOne Deep Visibility for IOC hits and shares them in the e-mail report
 - Performs SSDeep hashing on attachments
-- Wildfire hash checks
 
 ## Features/Detections:
 
@@ -32,23 +45,19 @@ I am not responsible if you wedge your system using this.
 -	Detects tracking pixels
 -	Detects Base Striker attacks
 -	Detects Executive spoofing
--	Detects suspicious subjects
--	Detects suspicious phrases
--	Detects suspicious patterns
--	Detects subject encoding
--	Detects Gmail protection methods as an indicator
+-	Detects suspicious subjects (Using SwiftFilter terms)
+-	Detects suspicious phrases (Using SwiftFilter terms)
+-	Detects suspicious patterns (Using SwiftFilter terms)
 -	Detects URL shorteners
     - Will unwrap shortened URLs to find the true destination
--	Detects rewrapped URLs
+-	Detects rewrapped URLs (e.g. Websense URL rewrapping)
     - Will unwrap the wrapped URls too find the true destination
 -	Detects Reply To mistmatches
 -	Screenshots all URLs for a snapshot of what the site looks like
 
 ## Coming Soon
 
--	DMARC/DKIM validation
--	Parallel processing of e-mails
-- Wild Fire sandbox posts
+
 
 
 ## Installation
