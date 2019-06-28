@@ -11,6 +11,16 @@ I am not responsible if you wedge your system using this.
 3. The script extracts all the observables, IPs, Emails, URLs, Domains, Attachments and runs them against reputation based tools
 4. The script gives the email a score out of 100 and sends a report to the designated security analyst.
 
+## Installation
+
+1. Create a phishing mailbox for users to send mail to
+2. Install the Microsoft Exchange Web Services API
+3. Modify the config.sample.json file and name it config.json
+4. Add your logo as `logo.png`
+5. Modify the `Thank You.html` file with your message
+6. Run `Check-PhishingReport.ps1`
+7. Profit
+
 ## Coming Soon
 
 - Bitcoin wallet detection
@@ -55,20 +65,6 @@ I am not responsible if you wedge your system using this.
 -	Detects Reply To mistmatches
 -	Screenshots all URLs for a snapshot of what the site looks like
 
-## Coming Soon
-
-
-
-
-## Installation
-
-1. Create a phishing mailbox for users to send mail to
-2. Install the Microsoft Exchange Web Services API
-3. Modify the config.sample.json file and name it config.json
-4. Add your logo as `logo.png`
-5. Modify the `Thank You.html` file with your message
-6. Run `Check-PhishingReport.ps1`
-7. Profit
 
 ## Sample Report
 
