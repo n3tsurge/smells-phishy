@@ -2,9 +2,11 @@ $scriptPath = Split-Path -parent $PSCommandPath
 
 $config = Get-Content .\config.json -Raw | ConvertFrom-JSON
 
+# Create the analysis folder, ignore the error if it already exists
+New-Item -ErrorAction Ignore -ItemType directory -Path $scriptPath"/Analysis"
+
 $VTApiKey = $config.VirusTotal.ApiKey
-$VTPositiveThreshold = $config.VirusTotal.PositiveThreshold
-$DomainWhitelist = $config.DomainWhitelist | % { $_.ToString() }
+$DomainWhitelist = $config.DomainWhitelist | ForEach-Object { $_.ToString() }
 
 # Default Request Params
 $DefaultRequestParams = @{}
@@ -192,7 +194,7 @@ function Get-NewMessages {
             Write-Log -Message "Found $itemCount Emails. Processing..."
         }
 
-        $Items | % { 
+        $Items | ForEach-Object { 
 
             $scanDate = Get-Date
 
@@ -212,7 +214,6 @@ function Get-NewMessages {
                 New-Item $workPath"/Attachments" -Type Directory | Out-Null
                 New-Item $workPath"/Screenshots" -Type Directory | Out-Null
                 New-Item $workpath"/ThreatData" -Type Directory | Out-Null
-                $archiveFile = $guid+".zip"
 
                 $indicators = @();
                 $threatHunt = @();
@@ -286,7 +287,7 @@ function Get-NewMessages {
                                 $message = "Email Address $(Defang $address) has been listed on HaveIBeenPwned"
                                 Write-Log -Message $message -ForeGroundColor Yellow
                                 $indicators += $message
-                                $threatScore += ($result | measure).Count * $config.Scoring.email_address_weight
+                                $threatScore += ($result | Measure-Object).Count * $config.Scoring.email_address_weight
                             }
                         }
                     }
@@ -457,11 +458,26 @@ function Get-NewMessages {
                     $threatScore += 5
                 }
 
-                foreach($address in $observables.addresses) {
-                    $username = Get-ADUsernameByEmail -Email $address
+                if($config.SentinelOne.Enabled) {
+                    foreach($address in $observables.addresses) {
+                        $username = Get-ADUsernameByEmail -Email $address
+                        if($username) {
+                            Write-Log -Message "Checking Anti-Virus status for user $username"
+                            $missingAV = $null -eq (Get-S1HostByUsername -Username $username).data
+                            if ($missingAV) {
+                                $message = "User $username appears to be missing Anti-Virus"
+                                Write-Log -Message $message -ForeGroundColor Red
+                                $indicators += $message
+                            }
+                        }
+                    }
+
+                    # Internal users should have been removed from the observables list so we have to check
+                    # against the person that reported the email to the phishing mailbox
+                    $username = Get-ADUsernameByEmail -Email $_.Sender.Address
                     if($username) {
                         Write-Log -Message "Checking Anti-Virus status for user $username"
-                        $missingAV = (Get-S1HostByUsername -Username $username).data -eq $null
+                        $missingAV = $null -eq (Get-S1HostByUsername -Username $username).data
                         if ($missingAV) {
                             $message = "User $username appears to be missing Anti-Virus"
                             Write-Log -Message $message -ForeGroundColor Red
@@ -544,51 +560,51 @@ function Get-NewMessages {
 
                     $report += "<h2>Observables</h2>"
                     $report += "<h3>IP Addresses</h3>"
-                    ForEach($ip in ($observables.ips | Select -Uniq)) {
+                    ForEach($ip in ($observables.ips | Select-Object -Uniq)) {
                         $ip = Defang $ip
                         $report += "<li>$ip</li>"
                     }
 
                     $report += "<h3>Subjects</h3>"
-                    ForEach($subject in ($observables.subjects | Select -Uniq)) {
+                    ForEach($subject in ($observables.subjects | Select-Object -Uniq)) {
                         $report += "<li>$subject</li>"
                     }
 
                     $report += "<h3>URLs</h3>"
-                    ForEach($url in ($observables.urls | Select -Uniq)) {
+                    ForEach($url in ($observables.urls | Select-Object -Uniq)) {
                         $url = Defang $url
                         $report += "<li>$url</li>"
                     }
 
                     $report += "<h3>Domains</h3>"
-                    ForEach($domain in ($observables.domains | Select -Uniq)) {
+                    ForEach($domain in ($observables.domains | Select-Object -Uniq)) {
                         $domain = Defang $domain
                         $report += "<li>$domain</li>"
                     }
 
                     $report += "<h3>Email Addresses</h3>"
-                    ForEach($address in ($observables.addresses | Select -Uniq)) {
+                    ForEach($address in ($observables.addresses | Select-Object -Uniq)) {
                         $address = Defang $address
                         $report += "<li>$address</li>"
                     }
 
                     $report += "<h3>Hashes</h3>"
-                    ForEach($hash in ($observables.hashes | Select -Uniq)) {
+                    ForEach($hash in ($observables.hashes | Select-Object-Object -Uniq)) {
                         $report += "<li>$hash</li>"
                     }
 
                     $report += "<h3>Suspicious Subject</h3>"
-                    ForEach($subject in ($observables.subject_matches | Select -Uniq)) {
+                    ForEach($subject in ($observables.subject_matches | Select-Object-Object -Uniq)) {
                         $report += "<li>$subject</li>"
                     }
 
                     $report += "<h3>Suspicious Phrases</h3>"
-                    ForEach($phrase in ($observables.phrase_matches | Select -Uniq)) {
+                    ForEach($phrase in ($observables.phrase_matches | Select-Object-Object -Uniq)) {
                         $report += "<li>$phrase</li>"
                     }
 
                     $report += "<h3>Suspicious Patterns</h3>"
-                    ForEach($pattern in ($observables.pattern_matches | Select -Uniq)) {
+                    ForEach($pattern in ($observables.pattern_matches | Select-Object -Uniq)) {
                         $report += "<li>$pattern</li>"
                     }
 
@@ -673,20 +689,20 @@ function Invoke-ExtractObservables {
         $observables.addresses += Invoke-ExtractEmailAddresses -Data $Message.InternetMessageHeaders
         
         # Check the body for base-striker 
-        $matches = (Select-String '(<base href.*)' -AllMatches -Input $message.Body.Text).Matches.Value
+        $matches = (Select-Object-String '(<base href.*)' -AllMatches -Input $message.Body.Text).Matches.Value
         if($matches.count -gt 0) {
             $observables.base_striker = $true
         }
         
         # Check the body for the existence of any tracking pixels
-        $matches = (Select-String '(<img.*(?=.*?src="(.*?)")(?=.*?(width\=\"1\"))(?=.*?(height\=\"1\")))' -AllMatches -Input $message.Body.Text).Matches
+        $matches = (Select-Object-String '(<img.*(?=.*?src="(.*?)")(?=.*?(width\=\"1\"))(?=.*?(height\=\"1\")))' -AllMatches -Input $message.Body.Text).Matches
         if($matches.Groups.Count -ge 4) {
             $observables.tracking_pixel = $true
         }
         
         # Check to see if any patterns are matched in the Message Body
         ForEach($pattern in $suspicious_patterns) {
-            $matches = ((Select-String $pattern -AllMatches -Input $message.Body.Text).Matches.Value)
+            $matches = ((Select-Object-String $pattern -AllMatches -Input $message.Body.Text).Matches.Value)
             if($matches.count -gt 0) {
                 $observables.pattern_matches += $matches
             }
@@ -694,7 +710,7 @@ function Invoke-ExtractObservables {
         
         # Check the body against well know phrases
         ForEach($phrase in $suspicious_phrases) {
-            $matches = ((Select-String $phrase -AllMatches -Input $message.Body.Text).Matches.Value)
+            $matches = ((Select-Object-String $phrase -AllMatches -Input $message.Body.Text).Matches.Value)
             if($matches.count -gt 0) {
                 $observables.phrase_matches += $matches
             }
@@ -703,7 +719,7 @@ function Invoke-ExtractObservables {
         # Check the subject against well know subjects
         # Check if the subject is encoded
         ForEach($subject in $suspicious_subjects) {
-            $matches = ((Select-String $subject -AllMatches -Input $message.Subject).Matches.Value)
+            $matches = ((Select-Object-String $subject -AllMatches -Input $message.Subject).Matches.Value)
             if($matches.count -gt 0) {
                 $observables.subject_matches += $matches
             }
@@ -725,14 +741,14 @@ function Invoke-ExtractObservables {
         
         # Check if the message headers have an encoded subject
         if($config.Checks.EncodedSubject) {          
-            $matches = ((Select-String "ubject\:\s\=\?" -AllMatches -Input $Message.InternetMessageHeaders).Matches.Value)
+            $matches = ((Select-Object-String "ubject\:\s\=\?" -AllMatches -Input $Message.InternetMessageHeaders).Matches.Value)
             if($matches.count -gt 0) {
                 $observables.encoded_subject = $true
             }
         }
         
         if($config.Checks.Executives) {
-            $observables.executive_fraud = Check-ExecutiveFraud -Email $Message.From
+            $observables.executive_fraud = Invoke-CheckExecFraud -Email $Message.From
         }
         
     } else {
@@ -759,7 +775,7 @@ function Invoke-ExtractObservables {
             $observables.urls += Invoke-ExtractWrappedURL -WebsenseURL $url
 
             # Remove the Wrapper URL
-            $observables.urls = $observables.urls | ? { $_ -notcontains $url }
+            $observables.urls = $observables.urls | Where-Object { $_ -notcontains $url }
 
             $observables.rewrapped = $true
         }
@@ -768,7 +784,7 @@ function Invoke-ExtractObservables {
     Write-Log -Message "Checking for shortened URLs"
     # Check if any of the URLs are shortened
     ForEach($url in $observables.urls) {
-        $data = Unshorten-URL $url
+        $data = Get-UnshortendURL $url
         if($data -ne $url) {
             Write-Log -Message "Discovered shortened URL $url, extracting final destination"
 
@@ -776,7 +792,7 @@ function Invoke-ExtractObservables {
             $observables.urls += $data
 
             # Remove the shortener
-            $observables.urls = $observables.urls | ? { $_ -notcontains $url }
+            $observables.urls = $observables.urls | Where-Object { $_ -notcontains $url }
 
             $observables.shorteners = $true
         }
@@ -815,12 +831,12 @@ function Invoke-ExtractObservables {
     }
 
     
-    $observables.addresses = [array]($filtered_emails | Sort-Object | Select -Uniq)
+    $observables.addresses = [array]($filtered_emails | Sort-Object | Select-Object -Uniq)
 
-    $observables.urls = [array]($filtered_urls | Sort-Object | Select -Uniq)
+    $observables.urls = [array]($filtered_urls | Sort-Object | Select-Object -Uniq)
 
     # Dedup the URLs and extract the domains from the URLs
-    $observables.urls = [array]($observables.urls | Sort-Object | Select -Uniq)
+    $observables.urls = [array]($observables.urls | Sort-Object | Select-Object -Uniq)
 
     # Normalize all the slashes
     if($observables.urls.Count -gt 0) {
@@ -828,7 +844,7 @@ function Invoke-ExtractObservables {
     }
 
     # Extract the domains from the URLs
-    $observables.urls | % {
+    $observables.urls | ForEach-Object {
         # Add the domain if it isn't already in the list
         if($_ -like "*http*") {
             $domain = ([System.URI]$_).Authority
@@ -838,7 +854,6 @@ function Invoke-ExtractObservables {
         } else {
             # Some URLs don't have a protocol in the URI
             # add one so System.URI can do its job
-            $url = "http://"+$_
             $domain = ([System.URI]$_).Authority
             if($observables.domains -notcontains $domain) {
                 $observables.domains += ($domain)    
@@ -855,7 +870,7 @@ function Invoke-ExtractObservables {
     }
 
     # Dedupe domains
-    $observables.domains = [array]($observables.domains | Sort-Object | Select -Uniq)
+    $observables.domains = [array]($observables.domains | Sort-Object | Select-Object -Uniq)
 
     # Resolve all the domains to their IP address
     if($observables.domains) {
@@ -870,7 +885,7 @@ function Invoke-ExtractObservables {
     }
 
     # Dedupe IPs and Domains again
-    $observables.ips = [array]($observables.ips | Sort-Object | Select -Uniq)
+    $observables.ips = [array]($observables.ips | Sort-Object | Select-Object -Uniq)
 
     return $observables
 }
@@ -957,11 +972,11 @@ function Invoke-ExtractIPs {
     )
 
     $ip_regex = "\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
-    $ips = ((Select-String $ip_regex -Input $data -AllMatches).Matches.Value)
-    $ips = $ips | Select -Uniq
+    $ips = ((Select-Object-String $ip_regex -Input $data -AllMatches).Matches.Value)
+    $ips = $ips | Select-Object -Uniq
 
     # Filter out RFC1918 addresses
-    $ips = $ips | Where { (!$_.StartsWith("192.168.") -and !$_.StartsWith("172.22.16.") -and !$_.StartsWith("10.") -and $_ -ne "127.0.0.1") }
+    $ips = $ips | Where-Object { (!$_.StartsWith("192.168.") -and !$_.StartsWith("172.22.16.") -and !$_.StartsWith("10.") -and $_ -ne "127.0.0.1") }
 
     return $ips
 }
@@ -974,8 +989,8 @@ function Invoke-ExtractURLs {
     $pattern = "\b(https?|ftp|file|skype|slack):(\/\/|.*)(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&\/\/=]*)\b"
     #$pattern = "\b(?:(?:https?|ftp|file)://|www\.|ftp\.)(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[-A-Z0-9+&@#\*/%=~_|$?!:,.])*(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[A-Z0-9+&@#\*/%=~_|$])
 
-    $urls = ((Select-String $pattern -AllMatches -Input $Data).Matches.Value)
-    $urls = $urls | Select -Uniq
+    $urls = ((Select-Object-String $pattern -AllMatches -Input $Data).Matches.Value)
+    $urls = $urls | Select-Object -Uniq
     return $urls
 }
 
@@ -984,8 +999,8 @@ function Invoke-ExtractEmailAddresses {
         [Parameter(Mandatory=$true)][string]$Data
     )
 
-    $emails = ((Select-String '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b'-AllMatches -Input $Data).Matches.Value)
-    $emails = $emails | Select -Uniq
+    $emails = ((Select-Object-String '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b'-AllMatches -Input $Data).Matches.Value)
+    $emails = $emails | Select-Object -Uniq
     return $emails
 }
 
@@ -1001,7 +1016,7 @@ function Invoke-ExtractWrappedURL {
 
         $Data = [System.Web.HttpUtility]::HtmlDecode($Data)
 
-        $url = ((Select-String 'URL:.*(\b(?:(?:https?|ftp|file)://|www\.|ftp\.)(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[-A-Z0-9+&@#\*/%=~_|$?!:,.])*(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[A-Z0-9+&@#\*/%=~_|$]))' -AllMatches -Input $data).Matches.Groups[1].Value)
+        $url = ((Select-Object-String 'URL:.*(\b(?:(?:https?|ftp|file)://|www\.|ftp\.)(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[-A-Z0-9+&@#\*/%=~_|$?!:,.])*(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[A-Z0-9+&@#\*/%=~_|$]))' -AllMatches -Input $data).Matches.Groups[1].Value)
         return $url
     }
 }
@@ -1046,13 +1061,13 @@ function Invoke-AnalyzeWhois {
     }
 }
 
-function Check-SiteCertificate{
+function Get-SiteCertificate{
     [CmdletBinding()]
 
     Param(
         [Parameter(Mandatory=$true)][string]$IP,
         [Parameter(Mandatory=$false)][string]$Port=443,
-        [Parameter(Mandatory=$false)][switch]$Validate=$true
+        [Parameter(Mandatory=$false)][switch]$Validate
     )
 
     Begin {
@@ -1151,7 +1166,7 @@ Function Validate-DNSRecords {
 
                 if($record.Strings -like "*ip4*") {
                     $ipCount = 0
-                    $matches = (Select-String 'ip4:([^*\s]+)' -Input $record.Strings -AllMatches).Matches
+                    $matches = (Select-Object-String 'ip4:([^*\s]+)' -Input $record.Strings -AllMatches).Matches
                     ForEach($match in $matches) {
                         $match.Groups[1].Value
                     }
@@ -1345,7 +1360,7 @@ function Get-PhishTankStatus {
     }
 }
 
-function Unshorten-URL {
+function Get-UnshortendURL {
     [CmdletBinding()]
 
     Param(
@@ -1385,7 +1400,7 @@ function Unshorten-URL {
             "tr.im"
         )
 
-        if($null -ne ($shorteners | ? { ([System.URI]$URI).Authority -match $_ }))
+        if($null -ne ($shorteners | Where-Object { ([System.URI]$URI).Authority -match $_ }))
         {
             $uri = "https://unshorten.me/s/$URL"
             $RequestParams = $DefaultRequestParams.Clone()
@@ -1608,7 +1623,7 @@ function Get-S1DeepVisibilityHits {
             $result = Invoke-RestMethod @RequestParams
             if ($result.data.responseState -eq "FINISHED") {
                 $queryFinished = $true
-                Sleep 5;
+                Start-Sleep 5;
             }
         }
 
@@ -1701,7 +1716,7 @@ Checks if the e-mail is masquerading as a company executive
 Executives are defined in the configuration file with their First, Last and Valid Email
 Requires the Microsoft Active Directory Module
 #>
-function Check-ExecutiveFraud {
+function Invoke-CheckExecFraud {
     [CmdletBinding()]
 
     Param(
@@ -1728,7 +1743,7 @@ function Check-ExecutiveFraud {
             
             # If we found the user pull all their mail addresses else return False
             if($adUser) {
-                $mailAddresses = $adUser.proxyAddresses | ? { $_ -match 'smtp' } | % { ($_ -split ":")[1] }
+                $mailAddresses = $adUser.proxyAddresses | Where-Object { $_ -match 'smtp' } | ForEach-Object { ($_ -split ":")[1] }
             } else {
                 return $false
             }            
@@ -1791,7 +1806,7 @@ function Get-WildFireReport {
         $RequestParams.Add('Method', 'POST')
         $RequestParams.Add('Body', @{'apikey'=$apikey;'hash'=$hash;'format'='xml'})
         $RequestParams.Remove('ContentType')
-        $result = Invoke-RestMethod @RequestParams
+        #$result = Invoke-RestMethod @RequestParams
         #$result.wildfire.
     }
 }
