@@ -235,6 +235,7 @@ function Get-NewMessages {
                     'tracking_pixel' = $false;
                     'base_striker' = $false;
                     'bitcoin_wallet' = $false;
+                    'wallet_addresses' = @();
                 }
 
                 # Thank the user for their submission
@@ -445,13 +446,17 @@ function Get-NewMessages {
                 }
 
                 if($observables.base_striker) {
-                    $indicators += "Potential Base Striker attack - HTML base tag detected"
+                    $message = "Potential Base Striker attack - HTML base tag detected"
+                    $indicators += $message
+                    Write-Log -Message $message -ForegroundColor Red
                     $threatScore += 10
                 }
 
                 if($observables.bitcoin_wallet) {
-                    $indicators += "Potential bitcoint wallet address detected"
-                    $threatSCore += 15
+                    $message = "Potential bitcoint wallet address detected"
+                    $indicators += $message
+                    Write-Log -Message $message -ForegroundColor Red
+                    $threatScore += 15
                 }
 
                 # threatScore can't be greater than 100
@@ -595,23 +600,31 @@ function Get-NewMessages {
                     }
 
                     $report += "<h3>Hashes</h3>"
-                    ForEach($hash in ($observables.hashes | Select-Object-Object -Uniq)) {
+                    ForEach($hash in ($observables.hashes | Select-Object -Uniq)) {
                         $report += "<li>$hash</li>"
                     }
 
                     $report += "<h3>Suspicious Subject</h3>"
-                    ForEach($subject in ($observables.subject_matches | Select-Object-Object -Uniq)) {
+                    ForEach($subject in ($observables.subject_matches | Select-Object -Uniq)) {
                         $report += "<li>$subject</li>"
                     }
 
                     $report += "<h3>Suspicious Phrases</h3>"
-                    ForEach($phrase in ($observables.phrase_matches | Select-Object-Object -Uniq)) {
+                    ForEach($phrase in ($observables.phrase_matches | Select-Object -Uniq)) {
                         $report += "<li>$phrase</li>"
                     }
 
                     $report += "<h3>Suspicious Patterns</h3>"
                     ForEach($pattern in ($observables.pattern_matches | Select-Object -Uniq)) {
                         $report += "<li>$pattern</li>"
+                    }
+                    
+                    # If we found any potential wallets put them in the report
+                    if($observables.bitcoin_wallet) {
+                        $report += "<h3>Potential Wallet Addresses</h3>"
+                        ForEach($address in ($observables.wallet_addresses | Select-Object -Uniq)) {
+                            $report += "<li>$address</li>"
+                        }
                     }
 
                     $report += "<h3>Screenshots</h3>"
@@ -701,10 +714,10 @@ function Invoke-ExtractObservables {
         }
 
         # Check the body for a bitcoin wallet address
-        # Issue #12
-        $Matches = (Select-String '^[13][a-km-zA-HJ-NP-Z0-9]{26,33}$' -AllMatches -Input $message.Body.Text).Matches
-        if($matches.Group.Count -ge 1) {
+        $matches = (Select-String '[13][a-km-zA-HJ-NP-Z0-9]{26,33}' -AllMatches -Input $message.Body.Text).Matches.Value
+        if($matches.count -ge 1) {
             $observables.bitcoin_wallet = $true
+            $observables.wallet_address = $matches
         }
         
         # Check the body for the existence of any tracking pixels
