@@ -234,6 +234,7 @@ function Get-NewMessages {
                     'reply_to_mismatch' = $false;
                     'tracking_pixel' = $false;
                     'base_striker' = $false;
+                    'bitcoin_wallet' = $false;
                 }
 
                 # Thank the user for their submission
@@ -446,6 +447,11 @@ function Get-NewMessages {
                 if($observables.base_striker) {
                     $indicators += "Potential Base Striker attack - HTML base tag detected"
                     $threatScore += 10
+                }
+
+                if($observables.bitcoin_wallet) {
+                    $indicators += "Potential bitcoint wallet address detected"
+                    $threatSCore += 15
                 }
 
                 # threatScore can't be greater than 100
@@ -689,20 +695,27 @@ function Invoke-ExtractObservables {
         $observables.addresses += Invoke-ExtractEmailAddresses -Data $Message.InternetMessageHeaders
         
         # Check the body for base-striker 
-        $matches = (Select-Object-String '(<base href.*)' -AllMatches -Input $message.Body.Text).Matches.Value
+        $matches = (Select-String '(<base href.*)' -AllMatches -Input $message.Body.Text).Matches.Value
         if($matches.count -gt 0) {
             $observables.base_striker = $true
         }
+
+        # Check the body for a bitcoin wallet address
+        # Issue #12
+        $Matches = (Select-String '^[13][a-km-zA-HJ-NP-Z0-9]{26,33}$' -AllMatches -Input $message.Body.Text).Matches
+        if($matches.Group.Count -ge 1) {
+            $observables.bitcoin_wallet = $true
+        }
         
         # Check the body for the existence of any tracking pixels
-        $matches = (Select-Object-String '(<img.*(?=.*?src="(.*?)")(?=.*?(width\=\"1\"))(?=.*?(height\=\"1\")))' -AllMatches -Input $message.Body.Text).Matches
+        $matches = (Select-String '(<img.*(?=.*?src="(.*?)")(?=.*?(width\=\"1\"))(?=.*?(height\=\"1\")))' -AllMatches -Input $message.Body.Text).Matches
         if($matches.Groups.Count -ge 4) {
             $observables.tracking_pixel = $true
         }
         
         # Check to see if any patterns are matched in the Message Body
         ForEach($pattern in $suspicious_patterns) {
-            $matches = ((Select-Object-String $pattern -AllMatches -Input $message.Body.Text).Matches.Value)
+            $matches = ((Select-String $pattern -AllMatches -Input $message.Body.Text).Matches.Value)
             if($matches.count -gt 0) {
                 $observables.pattern_matches += $matches
             }
@@ -710,7 +723,7 @@ function Invoke-ExtractObservables {
         
         # Check the body against well know phrases
         ForEach($phrase in $suspicious_phrases) {
-            $matches = ((Select-Object-String $phrase -AllMatches -Input $message.Body.Text).Matches.Value)
+            $matches = ((Select-String $phrase -AllMatches -Input $message.Body.Text).Matches.Value)
             if($matches.count -gt 0) {
                 $observables.phrase_matches += $matches
             }
@@ -719,7 +732,7 @@ function Invoke-ExtractObservables {
         # Check the subject against well know subjects
         # Check if the subject is encoded
         ForEach($subject in $suspicious_subjects) {
-            $matches = ((Select-Object-String $subject -AllMatches -Input $message.Subject).Matches.Value)
+            $matches = ((Select-String $subject -AllMatches -Input $message.Subject).Matches.Value)
             if($matches.count -gt 0) {
                 $observables.subject_matches += $matches
             }
@@ -741,7 +754,7 @@ function Invoke-ExtractObservables {
         
         # Check if the message headers have an encoded subject
         if($config.Checks.EncodedSubject) {          
-            $matches = ((Select-Object-String "ubject\:\s\=\?" -AllMatches -Input $Message.InternetMessageHeaders).Matches.Value)
+            $matches = ((Select-String "ubject\:\s\=\?" -AllMatches -Input $Message.InternetMessageHeaders).Matches.Value)
             if($matches.count -gt 0) {
                 $observables.encoded_subject = $true
             }
@@ -972,7 +985,7 @@ function Invoke-ExtractIPs {
     )
 
     $ip_regex = "\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
-    $ips = ((Select-Object-String $ip_regex -Input $data -AllMatches).Matches.Value)
+    $ips = ((Select-String $ip_regex -Input $data -AllMatches).Matches.Value)
     $ips = $ips | Select-Object -Uniq
 
     # Filter out RFC1918 addresses
@@ -989,7 +1002,7 @@ function Invoke-ExtractURLs {
     $pattern = "\b(https?|ftp|file|skype|slack):(\/\/|.*)(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&\/\/=]*)\b"
     #$pattern = "\b(?:(?:https?|ftp|file)://|www\.|ftp\.)(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[-A-Z0-9+&@#\*/%=~_|$?!:,.])*(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[A-Z0-9+&@#\*/%=~_|$])
 
-    $urls = ((Select-Object-String $pattern -AllMatches -Input $Data).Matches.Value)
+    $urls = ((Select-String $pattern -AllMatches -Input $Data).Matches.Value)
     $urls = $urls | Select-Object -Uniq
     return $urls
 }
@@ -999,7 +1012,7 @@ function Invoke-ExtractEmailAddresses {
         [Parameter(Mandatory=$true)][string]$Data
     )
 
-    $emails = ((Select-Object-String '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b'-AllMatches -Input $Data).Matches.Value)
+    $emails = ((Select-String '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}\b'-AllMatches -Input $Data).Matches.Value)
     $emails = $emails | Select-Object -Uniq
     return $emails
 }
@@ -1016,7 +1029,7 @@ function Invoke-ExtractWrappedURL {
 
         $Data = [System.Web.HttpUtility]::HtmlDecode($Data)
 
-        $url = ((Select-Object-String 'URL:.*(\b(?:(?:https?|ftp|file)://|www\.|ftp\.)(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[-A-Z0-9+&@#\*/%=~_|$?!:,.])*(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[A-Z0-9+&@#\*/%=~_|$]))' -AllMatches -Input $data).Matches.Groups[1].Value)
+        $url = ((Select-String 'URL:.*(\b(?:(?:https?|ftp|file)://|www\.|ftp\.)(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[-A-Z0-9+&@#\*/%=~_|$?!:,.])*(?:\([-A-Z0-9+&@#\*/%=~_|$?!:,.]*\)|[A-Z0-9+&@#\*/%=~_|$]))' -AllMatches -Input $data).Matches.Groups[1].Value)
         return $url
     }
 }
@@ -1166,7 +1179,7 @@ Function Validate-DNSRecords {
 
                 if($record.Strings -like "*ip4*") {
                     $ipCount = 0
-                    $matches = (Select-Object-String 'ip4:([^*\s]+)' -Input $record.Strings -AllMatches).Matches
+                    $matches = (Select-String 'ip4:([^*\s]+)' -Input $record.Strings -AllMatches).Matches
                     ForEach($match in $matches) {
                         $match.Groups[1].Value
                     }
