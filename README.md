@@ -23,7 +23,6 @@ I am not responsible if you wedge your system using this.
 
 ## Coming Soon
 
-- Bitcoin wallet detection
 - Detecting Base64 encoded payloads in HTML attachments
 - Extension based scoring (via file extension and magic number)
 - MISP Integration
@@ -33,6 +32,7 @@ I am not responsible if you wedge your system using this.
 - Wild Fire sandbox posts
 - Observable history (speeds up processing of similiar indicators)
 - Report history (when users report similiar e-mails just reply don't assess)
+- Exchange integration to automatically remove messages
 
 ## New Features:
 
@@ -40,6 +40,7 @@ I am not responsible if you wedge your system using this.
     - SentinelOne to see if the recipient has AV installed
     - Search SentinelOne Deep Visibility for IOC hits and shares them in the e-mail report
 - Performs SSDeep hashing on attachments
+- Bitcoin wallet detection
 
 ## Features/Detections:
 
